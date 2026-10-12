@@ -70,6 +70,8 @@ jobs:
         run: ./target/release/uni doctor
       - name: Independent-oracle synthetic benchmark integrity tests
         run: python3 -m unittest discover -s experiments/assurance-bench/tests -p 'test_*.py'
+      - name: Aftershock read-only observer pilot (synthetic SQLite only)
+        run: python3 -m unittest discover -s experiments/aftershock -p 'test_*.py'
 
   # The published action, exercised for real: it downloads the release binary
   # for the runner platform. The artifact example runs no runtime at all
