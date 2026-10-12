@@ -307,3 +307,57 @@ fn incomplete_acceptance_blocks_an_executor_before_side_effects() {
     assert_eq!(report["coverage"]["status"], "INCOMPLETE");
     assert!(!dir.join("cannot-have-run.txt").exists());
 }
+
+fn cli_pinned(dir: &Path, args: &[&str], pin: &str) -> (bool, serde_json::Value) {
+    let output = Command::new(support::bin())
+        .arg("--json")
+        .args(args)
+        .env("UNI_ACCEPTANCE_SHA256", pin)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    let record: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+        panic!(
+            "missing coverage JSON: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    (output.status.success(), record)
+}
+
+#[test]
+fn externally_pinned_manifest_matches_and_fails_after_mutation() {
+    let dir = fixture();
+    manifest(&dir, "");
+    let pin = uni_evidence::sha256_hex(&std::fs::read(dir.join("owner.toml")).unwrap());
+    let args = ["verify", "contract.uni", "--acceptance", "owner.toml"];
+    let (valid, accepted) = cli_pinned(&dir, &args, &pin);
+    assert!(valid, "{accepted}");
+    assert_eq!(accepted["coverage"]["revision_pin"], "MATCHED");
+    assert_eq!(accepted["coverage"]["manifest_sha256"], pin);
+    // The mapping remains semantically identical, but its owner-pinned
+    // revision changed. Do not trust it until the owner renews the pin.
+    let mut content = std::fs::read_to_string(dir.join("owner.toml")).unwrap();
+    content.push_str("\n# changed by a worker\n");
+    std::fs::write(dir.join("owner.toml"), content).unwrap();
+    let (valid, blocked) = cli_pinned(&dir, &args, &pin);
+    assert!(!valid);
+    assert_eq!(blocked["coverage"]["revision_pin"], "MISMATCH");
+    assert_eq!(
+        blocked["coverage"]["findings"][0]["kind"],
+        "manifest_digest_mismatch"
+    );
+}
+
+#[test]
+fn invalid_revision_pin_never_disables_hash_enforcement() {
+    let dir = fixture();
+    manifest(&dir, "");
+    let args = ["coverage", "contract.uni", "--manifest", "owner.toml"];
+    for value in ["", "not-a-sha", "g".repeat(64).as_str()] {
+        let (valid, report) = cli_pinned(&dir, &args, value);
+        assert!(!valid);
+        assert_eq!(report["revision_pin"], "INVALID");
+        assert_eq!(report["findings"][0]["kind"], "invalid_revision_pin");
+    }
+}
