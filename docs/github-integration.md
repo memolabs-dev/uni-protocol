@@ -65,7 +65,7 @@ action repo root:
 ```
 
 Inputs: `contract` (required), `version` (default `v0.9.4`), `repository`
-(default `guillaume-flambard/uni-protocol`, replace with your fork), `report-to-summary`
+(default `memolabs-dev/uni-protocol`, replace with your fork), `report-to-summary`
 (default true). Unknown runner OS fails loudly instead of silently skipping.
 
 The v0.9.4 Windows asset is a ZIP payload with a `.tar.gz` name. The action on

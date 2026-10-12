@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL \
-            https://github.com/guillaume-flambard/uni-protocol/releases/download/v0.9.4/uni-x86_64-unknown-linux-gnu.tar.gz \
+            https://github.com/memolabs-dev/uni-protocol/releases/download/v0.9.4/uni-x86_64-unknown-linux-gnu.tar.gz \
             | tar -xz -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 

@@ -150,3 +150,30 @@ jobs:
             fi
           done
           exit $rc
+
+  # One stable required check. A matrix may pass partially; every required
+  # upstream job must report success for the protected branch to advance.
+  required-gate:
+    name: UNI required checks
+    if: ${{ always() && github.ref_type != 'tag' }}
+    needs: [matrix, examples-posix, action-smoke, lint]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Assert every required job succeeded
+        env:
+          CORE: ${{ needs.matrix.result }}
+          EXAMPLES: ${{ needs.examples-posix.result }}
+          ACTION: ${{ needs.action-smoke.result }}
+          LINT: ${{ needs.lint.result }}
+        shell: bash
+        run: |
+          echo "Core matrix: $CORE"
+          echo "Cross-stack examples: $EXAMPLES"
+          echo "Published action: $ACTION"
+          echo "Lint and policy: $LINT"
+          test "$CORE" = success
+          test "$EXAMPLES" = success
+          test "$ACTION" = success
+          test "$LINT" = success

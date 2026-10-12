@@ -1,8 +1,8 @@
 # UNI - Outcome Assurance Protocol
 
-[![CI](https://github.com/guillaume-flambard/uni-protocol/actions/workflows/uni.yml/badge.svg?branch=main)](https://github.com/guillaume-flambard/uni-protocol/actions/workflows/uni.yml)
-[![Live identity check](https://github.com/guillaume-flambard/uni-protocol/actions/workflows/identity-live.yml/badge.svg?branch=main)](https://github.com/guillaume-flambard/uni-protocol/actions/workflows/identity-live.yml)
-[![Release](https://img.shields.io/github/v/release/guillaume-flambard/uni-protocol)](https://github.com/guillaume-flambard/uni-protocol/releases/latest)
+[![CI](https://github.com/memolabs-dev/uni-protocol/actions/workflows/uni.yml/badge.svg?branch=main)](https://github.com/memolabs-dev/uni-protocol/actions/workflows/uni.yml)
+[![Live identity check](https://github.com/memolabs-dev/uni-protocol/actions/workflows/identity-live.yml/badge.svg?branch=main)](https://github.com/memolabs-dev/uni-protocol/actions/workflows/identity-live.yml)
+[![Release](https://img.shields.io/github/v/release/memolabs-dev/uni-protocol)](https://github.com/memolabs-dev/uni-protocol/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](LICENSE-MIT)
 
 **An agent saying DONE is not evidence. Verify the outcome.**
@@ -23,7 +23,7 @@ Prerequisites: Git, a stable Rust toolchain, and the build tools required by
 your project.
 
 ```bash
-git clone https://github.com/guillaume-flambard/uni-protocol.git
+git clone https://github.com/memolabs-dev/uni-protocol.git
 cd uni-protocol
 cargo build --release
 ./target/release/uni verify examples/hello/hello.uni
@@ -112,6 +112,10 @@ timeout = 30
 
 `expect` = output must contain; `expect_not` = output must not contain; `files` = content-bound
 evidence invalidation by SHA-256 over watched files.
+
+## Product direction
+
+Memo Labs Dev maintains UNI as a standalone outcome-assurance layer. See the [roadmap](docs/roadmap.md) and [October 2026 research snapshot](docs/research/outcome-assurance-landscape-2026-10.md).
 
 ## Documentation
 

@@ -15,7 +15,7 @@ decision. `constitution.md` is the twelve rules everything else answers to, and
 ## Set up
 
 ```bash
-git clone https://github.com/guillaume-flambard/uni-protocol
+git clone https://github.com/memolabs-dev/uni-protocol
 cd uni-protocol
 cargo build --release
 ./target/release/uni verify examples/hello/hello.uni   # end to end, no network
