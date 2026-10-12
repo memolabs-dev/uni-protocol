@@ -46,8 +46,15 @@ def verify(db_file, notes_root):
             entry["issues"].append("EVIDENCE_IDENTITY_MISMATCH")
         if item.get("critic_verdict") != verdict or verdict not in PUBLISHED | NON_PUBLISHED:
             entry["issues"].append("CRITIC_VERDICT_MISMATCH")
-        if not isinstance(item.get("critic_sha256"), str) or len(item["critic_sha256"]) != 64:
+        critic = item.get("critic_payload")
+        if not isinstance(critic, dict) or not critic:
             entry["issues"].append("CRITIC_EVIDENCE_MISSING")
+        else:
+            calculated = hashlib.sha256(json.dumps(critic, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            if calculated != item.get("critic_sha256"):
+                entry["issues"].append("CRITIC_DIGEST_MISMATCH")
+            if critic.get("verdict") != verdict:
+                entry["issues"].append("CRITIC_CONTENT_VERDICT_MISMATCH")
         if verdict in PUBLISHED and written == "1":
             path = item.get("note_path")
             if not isinstance(path, str):

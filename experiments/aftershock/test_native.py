@@ -23,7 +23,9 @@ class NativeTests(unittest.TestCase):
         self.item = {"schema": "aftershock.evidence/v1", "cycle_id": 1,
                      "note_path": str(self.note),
                      "note_sha256": hashlib.sha256(self.note.read_bytes()).hexdigest(),
-                     "critic_verdict": "WATCH", "critic_sha256": "a" * 64,
+                     "critic_verdict": "WATCH",
+                     "critic_payload": {"verdict": "WATCH"},
+                     "critic_sha256": hashlib.sha256(json.dumps({"verdict": "WATCH"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
                      "source_urls": ["https://example.org/a"]}
         with sqlite3.connect(self.db) as db:
             db.execute("create table cycle (id integer primary key, sujet text, verdict text, ecrit text)")
@@ -46,9 +48,16 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.result()["cycles"][0]["issues"], ["NOTE_DIGEST_MISMATCH"])
 
     def test_critic_missing_fails(self):
-        self.item["critic_sha256"] = None
+        self.item["critic_payload"] = None
         self.write()
         self.assertIn("CRITIC_EVIDENCE_MISSING", self.result()["cycles"][0]["issues"])
+
+    def test_tampered_critic_content_fails(self):
+        self.item["critic_payload"]["verdict"] = "REJECT"
+        self.write()
+        issues = self.result()["cycles"][0]["issues"]
+        self.assertIn("CRITIC_DIGEST_MISMATCH", issues)
+        self.assertIn("CRITIC_CONTENT_VERDICT_MISMATCH", issues)
 
     def test_missing_record_is_unknown_not_pass(self):
         with sqlite3.connect(self.db) as db:
@@ -59,7 +68,9 @@ class NativeTests(unittest.TestCase):
     def test_rejected_unpublished_cycle_passes(self):
         with sqlite3.connect(self.db) as db:
             db.execute("update cycle set verdict='REJECT',ecrit='0'")
-        self.item.update({"critic_verdict": "REJECT", "note_path": None, "note_sha256": None})
+        self.item.update({"critic_verdict": "REJECT", "note_path": None, "note_sha256": None,
+                          "critic_payload": {"verdict": "REJECT"}})
+        self.item["critic_sha256"] = hashlib.sha256(json.dumps(self.item["critic_payload"], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         self.write()
         self.assertEqual(self.result()["status"], "PASS")
 
