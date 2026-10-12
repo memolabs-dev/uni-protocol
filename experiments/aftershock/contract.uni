@@ -1,0 +1,12 @@
+VERSION 0.1
+DOMAIN software
+INTENT aftershock.delivery-observed
+GOAL
+  Observe a genuine recent research cycle, not only an agent heartbeat.
+CLAIM delivered-cycle REQUIRED
+  ENSURE a completed research cycle is recent and has a readable critique verdict, distinct from a heartbeat
+VERIFY delivered-cycle
+  USING aftershock.observer
+ACCEPT WHEN
+  required_claims == VERIFIED
+  AND critical_failures == 0
