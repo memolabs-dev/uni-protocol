@@ -1,0 +1,12 @@
+VERSION 0.1
+DOMAIN software
+INTENT aftershock.native-cycle-receipt-integrity
+GOAL
+  Verify the native producer receipt for every observed business cycle.
+CLAIM native-cycle-receipts REQUIRED
+  ENSURE each business cycle has an internally consistent trace-linked receipt, note, sources and critic evidence
+VERIFY native-cycle-receipts
+  USING aftershock.native
+ACCEPT WHEN
+  required_claims == VERIFIED
+  AND critical_failures == 0
