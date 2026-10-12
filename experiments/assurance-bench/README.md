@@ -74,3 +74,19 @@ Future work (#3): real-world multi-file tasks, independent test verification,
 adjudication notes, repeated runs across models and stacks, coverage, CI
 overheads, confidence intervals, and publication of the oracle revision hashes.
 This is a methodology baseline, not a population estimate or product claim.
+
+## An actual UNI CLI result on the synthetic fixture
+
+The integrity test `tests/test_real_uni_cli.py` builds a minimal visible-test
+contract in a disposable copy of each candidate and invokes the **real**
+`uni --json verify` binary. The intentionally incomplete delivery and the
+correct delivery both pass those two visible ledger checks, so UNI reports
+`Accepted` on both. The disjoint owner oracle rejects the former because
+it violates the negative-balance invariant. This demonstrates a **coverage
+limit**, not an agent failure rate or a defect in a claim UNI was asked to
+verify. It makes the limit repeatable rather than relying on a fabricated
+`uni_decision` field. CI builds UNI before the harness tests.
+
+This is precisely why the next study needs externally reviewed contracts and
+explicit coverage criteria; adding more generated checks is not the same as
+proving the owner's full desired outcome.
