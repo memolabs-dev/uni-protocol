@@ -39,6 +39,7 @@ pub(crate) struct Coverage {
     pub authority: &'static str,
     pub scope: &'static str,
     pub manifest_sha256: String,
+    pub revision_pin: &'static str,
 }
 
 impl Coverage {
@@ -72,6 +73,42 @@ pub(crate) fn analyze(
     let manifest: Manifest = toml::from_str(&contents)
         .with_context(|| format!("parse acceptance manifest {}", manifest_path.display()))?;
     let mut findings = vec![];
+    let digest = uni_evidence::sha256_hex(contents.as_bytes());
+    // Optional revision pin is provided by the caller environment; only
+    // external access control can establish that it comes from an owner.
+    let revision_pin = match std::env::var("UNI_ACCEPTANCE_SHA256") {
+        Err(std::env::VarError::NotPresent) => "UNPINNED",
+        Err(std::env::VarError::NotUnicode(_)) => {
+            problem(
+                &mut findings,
+                "<manifest>",
+                "invalid_revision_pin",
+                "UNI_ACCEPTANCE_SHA256 must be 64 hexadecimal characters",
+            );
+            "INVALID"
+        }
+        Ok(expected)
+            if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) =>
+        {
+            problem(
+                &mut findings,
+                "<manifest>",
+                "invalid_revision_pin",
+                "UNI_ACCEPTANCE_SHA256 must be 64 hexadecimal characters",
+            );
+            "INVALID"
+        }
+        Ok(expected) if !expected.eq_ignore_ascii_case(&digest) => {
+            problem(
+                &mut findings,
+                "<manifest>",
+                "manifest_digest_mismatch",
+                format!("manifest sha256:{digest} differs from the configured pin"),
+            );
+            "MISMATCH"
+        }
+        Ok(_) => "MATCHED",
+    };
     if manifest.version != 1 {
         problem(
             &mut findings,
@@ -202,7 +239,8 @@ pub(crate) fn analyze(
         findings,
         authority: "CALLER_SUPPLIED_NOT_AUTHENTICATED",
         scope: "DECLARED_CRITERIA_ONLY",
-        manifest_sha256: uni_evidence::sha256_hex(contents.as_bytes()),
+        manifest_sha256: digest,
+        revision_pin,
     })
 }
 
@@ -215,8 +253,8 @@ pub(crate) fn print_coverage(coverage: &Coverage, as_json: bool) {
     } else {
         println!("UNI acceptance coverage: {}", coverage.status);
         println!(
-            "Mapped {}/{} declared criteria; manifest authority is NOT authenticated by UNI",
-            coverage.mapped, coverage.declared
+            "Mapped {}/{} criteria; revision pin {}; manifest author not authenticated",
+            coverage.mapped, coverage.declared, coverage.revision_pin
         );
         for finding in &coverage.findings {
             println!(

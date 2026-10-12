@@ -58,3 +58,9 @@ The word COMPLETE means all **declared** criteria have matching contract
 mappings. It is not an assurance of all unstated requirements or independent
 proof of correctness. See issue #13 and the reproducible synthetic ledger
 counterexample in experiments/assurance-bench.
+
+## Optional external revision pin
+
+Set `UNI_ACCEPTANCE_SHA256` to the exact SHA-256 of the reviewed manifest bytes before calling `uni coverage`, `uni verify --acceptance` or `uni run --acceptance`. UNI refuses an invalid or mismatched configured pin. A matching hash reports `revision_pin = MATCHED`; without a configured pin it reports `UNPINNED`. An empty configured value is invalid, not equivalent to no pin.
+
+For CI, provision the digest through an owner-controlled repository or organization variable and require the acceptance-aware check. A caller can forge its own digest, so hash matching by itself **does not establish who authorized the manifest**; use your platform's access controls and reviews for that. Update the protected expected digest only after explicitly approving a new manifest revision.
