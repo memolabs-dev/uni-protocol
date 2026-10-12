@@ -52,9 +52,15 @@ seven dimensions (Verification Context, v0.2):
    plainly: an untracked file that no verifier observes does not by itself
    invalidate evidence. Declare the subject with `files` when that matters.
 2. **Content binding** (`artifact_hash`): if a verifier declares `files` globs,
-   the evidence stores a sha256 over those files' contents. Any change inside the
-   same commit invalidates it. This is what stops a previously accepted outcome
-   from masking a new bad edit.
+   the evidence stores a deterministic sha256 over an ordered list of path and
+   content hashes. Both the digest and per-file map come from one filesystem
+   enumeration. A wildcard like `src/*.rs` matches a filename segment, and
+   `src/**` matches files recursively. Empty or unreadable watched subjects,
+   and symlinks under the static prefix of a watched glob, fail closed; UNI
+   does not follow symlinked subjects outside the workspace. As before,
+   build caches, Git metadata, and UNI runtime output are not watched.
+   Changes to a watched subject invalidate previously accepted evidence.
+   This does not make claims about untracked content outside the declared scope.
 3. **Context binding** (`contract_hash`, `registry_hash`, `platform`): editing
    the contract, touching any registry entry, or moving across platforms
    invalidates. Legacy v0.1.0 files (empty hashes) still load.
