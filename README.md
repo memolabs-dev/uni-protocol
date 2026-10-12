@@ -32,8 +32,8 @@ cargo build --release
 
 That example runs `cargo check` through the trusted registry and records the
 evidence under `.uni/`. To start in another repository, follow the complete
-[quickstart](docs/quickstart.md). A fresh `uni init` uses Cargo commands as its
-starter registry; replace those entries for Python, Node, or another stack.
+[quickstart](docs/quickstart.md). Use `uni init --profile node` or `--profile python` for corresponding
+starter verifier commands; review the trusted registry to match your project.
 
 ## Capability map (v0.9)
 

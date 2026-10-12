@@ -1,4 +1,4 @@
-use crate::dot_uni;
+use crate::{dot_uni, InitProfile};
 use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 
@@ -168,7 +168,7 @@ pub(crate) fn cmd_lint(file: &Path, as_json: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn cmd_init() -> Result<()> {
+pub(crate) fn cmd_init(profile: InitProfile) -> Result<()> {
     // `policies` is created empty because the policy layer reads
     // `.uni/policies/*.toml`: a fresh workspace should be a place you can put a
     // policy, not one where you first have to mkdir.
@@ -184,14 +184,29 @@ pub(crate) fn cmd_init() -> Result<()> {
     std::fs::create_dir_all("uni/intents")?;
     let cfg = dot_uni().join("config.toml");
     if !cfg.exists() {
-        std::fs::write(
-            &cfg,
-            r#"[verifiers]
+        let registry = match profile {
+            InitProfile::Rust => {
+                r#"[verifiers]
 "project.check" = "cargo check"
 "project.tests" = "cargo test"
 "project.build" = "cargo build"
-"#,
-        )?;
+"#
+            }
+            InitProfile::Node => {
+                r#"[verifiers]
+"project.check" = "npm run typecheck"
+"project.tests" = "npm test"
+"project.build" = "npm run build"
+"#
+            }
+            InitProfile::Python => {
+                r#"[verifiers]
+"project.check" = "python -m compileall -q ."
+"project.tests" = "python -m unittest discover"
+"#
+            }
+        };
+        std::fs::write(&cfg, registry)?;
     }
     println!("initialized .uni/ + uni/intents/");
     Ok(())
