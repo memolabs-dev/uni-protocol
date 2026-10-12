@@ -428,6 +428,9 @@ pub fn run_spec(
     executor: &uni_evidence::Actor,
 ) -> Result<Evidence> {
     let verifier = verifier_for(spec)?;
+    // Record the declared input before executing a potentially mutating
+    // verifier. A proof for an old input must not be stamped onto new bytes.
+    let before = subject_snapshot(spec, workspace);
     let started = Instant::now();
     let outcome = verifier.run(spec, workspace)?;
     let mut ev = build_evidence(
@@ -439,8 +442,17 @@ pub fn run_spec(
     );
     ev.duration_ms = started.elapsed().as_millis();
     let subject = subject_snapshot(spec, workspace);
+    let changed_during_run = before.digest.is_some() && before.digest != subject.digest;
     ev.artifact_files = subject.files;
     ev.artifact_hash = subject.digest.unwrap_or_default();
+    if changed_during_run {
+        // A previously existing watched subject was modified (or disappeared)
+        // while the verifier was running. In contrast, a fresh generated
+        // output that did not exist before is checked by its post-run digest.
+        ev.state = EvidenceState::Invalid;
+        ev.output_excerpt
+            .push_str("\n[uni] watched subject changed during verifier execution; proof refused");
+    }
     // Time dimension: a proof whose truth decays carries its own expiry, so the
     // loader needs no registry access to honour it.
     if spec.max_age_hours > 0 {
@@ -897,6 +909,48 @@ mod tests {
             artifact_hash(&s, &d).is_none(),
             "directory links must never let watched globs escape the workspace"
         );
+    }
+
+    #[test]
+    fn verifier_must_not_accept_a_subject_modified_during_its_own_run() {
+        let d = tmp("inflight-drift");
+        std::fs::write(d.join("watched.txt"), "before").unwrap();
+        let mut s = spec("echo changed > watched.txt");
+        s.files = vec!["watched.txt".into()];
+        let ev = run_spec(
+            "inflight",
+            "owner.verifier",
+            &s,
+            &d,
+            30,
+            &uni_evidence::Actor::local(),
+            &uni_evidence::Actor::local(),
+        )
+        .unwrap();
+        assert_eq!(
+            ev.state,
+            EvidenceState::Invalid,
+            "a proof must not be bound to bytes modified while the verifier ran"
+        );
+    }
+
+    #[test]
+    fn verifier_can_prove_an_output_first_created_by_its_command() {
+        let d = tmp("generated-output");
+        let mut s = spec("echo generated > output.txt");
+        s.files = vec!["output.txt".into()];
+        let ev = run_spec(
+            "generated",
+            "owner.verifier",
+            &s,
+            &d,
+            30,
+            &uni_evidence::Actor::local(),
+            &uni_evidence::Actor::local(),
+        )
+        .unwrap();
+        assert_eq!(ev.state, EvidenceState::Valid);
+        assert!(ev.artifact_files.contains_key("output.txt"));
     }
     #[test]
     fn run_spec_applies_expect_matchers_on_full_output() {

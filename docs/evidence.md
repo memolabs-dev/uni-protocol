@@ -64,6 +64,14 @@ seven dimensions (Verification Context, v0.2):
    `files` is omitted; parent traversal, absolute paths and symlink components
    are refused by the built-in adapter. Paths outside the workspace do not
    produce acceptable evidence.
+   For a new proof, UNI also captures before and after execution: if an
+   already-existing watched subject moves *while the verifier runs*, the
+   proof is marked Invalid rather than silently rebound to the final bytes.
+   A first-time generated output may appear during the command and is
+   bound by its final digest. These before/after snapshots limit, but do
+   not eliminate, filesystem race conditions (e.g. mutation and restoration
+   between the two snapshots). For high-assurance work, use isolated
+   verifiers and immutable candidate workspaces.
    This does not make claims about untracked content outside the declared scope.
 3. **Context binding** (`contract_hash`, `registry_hash`, `platform`): editing
    the contract, touching any registry entry, or moving across platforms
