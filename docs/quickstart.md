@@ -16,15 +16,23 @@ Exit codes: 0 = ACCEPTED, 1 = REJECTED / EVIDENCE_REQUIRED / ESCALATED.
 
 ## Start in your own repository
 
-Initialize the local registry and runtime directories:
+Initialize the local registry and runtime directories, choosing the starter
+commands for your stack:
 
 ```bash
-uni init
+uni init                   # Rust/Cargo (the default)
+uni init --profile node    # npm scripts: typecheck, test, build
+uni init --profile python  # Python: compileall and unittest discovery
 ```
 
-The starter registry contains Cargo commands. Edit `.uni/config.toml` before
-continuing if your project uses another stack. The examples include Python
-`unittest`, Node `node --test`, POSIX shell checks, and a command-free file hash.
+Choose only **one** profile for a fresh repository. If `.uni/config.toml`
+already exists, `uni init` never overwrites it, even with a different profile.
+
+The profile seeds **trusted verifier commands**, not assertions that the
+project supports them. Review `.uni/config.toml` before executing a contract,
+adjust missing scripts or Python test runners, and keep missing checks as
+failures rather than silently skipping them. The examples also include Python
+`unittest`, Node `node --test`, POSIX shell checks, and file hashing.
 
 Choose one contract path.
 

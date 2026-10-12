@@ -14,9 +14,22 @@ struct Cli {
     json: bool,
 }
 
+#[derive(clap::ValueEnum, Copy, Clone, Debug)]
+pub(crate) enum InitProfile {
+    Rust,
+    #[value(alias = "nodejs")]
+    Node,
+    Python,
+}
+
 #[derive(Subcommand)]
 enum Cmd {
-    Init,
+    Init {
+        /// Starter commands for trusted verifiers. Review .uni/config.toml
+        /// before verifying a contract; missing project scripts must fail.
+        #[arg(long, value_enum, default_value_t = InitProfile::Rust)]
+        profile: InitProfile,
+    },
     Compile {
         file: PathBuf,
     },
@@ -114,7 +127,7 @@ pub(crate) fn dot_uni() -> PathBuf {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Init => cmd::contract::cmd_init(),
+        Cmd::Init { profile } => cmd::contract::cmd_init(profile),
         Cmd::Compile { file } => cmd::contract::cmd_compile(&file, cli.json),
         Cmd::Verify {
             file,
