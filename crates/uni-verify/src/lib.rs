@@ -184,128 +184,150 @@ pub fn resolve_command(
     Ok(trusted.clone())
 }
 
-/// Content-addressed hash over the files a verifier watches (FR-010/FR-013).
-/// Pattern semantics: matched against path RELATIVE to workspace; `*` within a
-/// segment, `**` across segments; prefix/suffix matching otherwise.
-/// Per-file hashes of the watched files, workspace-relative and sorted. This is
-/// what lets UNI name *which* files changed since a proof was established,
-/// instead of only reporting that the subject drifted.
+/// Per-file hashes are the single source of truth for a watched subject.
+/// A missing, unreadable, non-regular or symlinked subject is not evidence:
+/// fail closed rather than recording a partial or potentially escaped tree.
+/// Paths are relative to the canonical workspace and sorted by BTreeMap.
+fn observed_subject(
+    spec: &VerifierSpec,
+    workspace: &std::path::Path,
+) -> Option<std::collections::BTreeMap<String, String>> {
+    if spec.files.is_empty() {
+        return None;
+    }
+    let root = std::fs::canonicalize(workspace).ok()?;
+    let mut stack = vec![root.clone()];
+    let mut found = std::collections::BTreeMap::new();
+    // Neither runtime output nor build caches constitute a declared subject.
+    let skip = ["target", ".git", ".uni", "evidence"];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).ok()?;
+        for entry in entries {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let rel = path
+                .strip_prefix(&root)
+                .ok()?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let ty = entry.file_type().ok()?;
+            if ty.is_symlink() {
+                // A linked directory could introduce entire unobserved subtrees
+                // and a linked file could escape the workspace. Reject links
+                // anywhere under the non-wildcard prefix of a watched glob.
+                if spec.files.iter().any(|pat| symlink_may_affect(&rel, pat)) {
+                    return None;
+                }
+                continue;
+            }
+            if ty.is_dir() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !skip.contains(&name) {
+                    stack.push(path);
+                }
+            } else if spec.files.iter().any(|pat| path_matches_glob(&rel, pat)) {
+                if !ty.is_file() {
+                    return None;
+                }
+                found.insert(rel, sha256_hex(&std::fs::read(&path).ok()?));
+            }
+        }
+    }
+    (!found.is_empty()).then_some(found)
+}
+
+/// A conservative scope check: even a linked child under a watched directory
+/// makes the claimed subject unverifiable, whether or not its name happens
+/// to match the filename wildcard.
+fn symlink_may_affect(rel: &str, pat: &str) -> bool {
+    let prefix = pat
+        .split('/')
+        .take_while(|segment| !segment.contains('*'))
+        .collect::<Vec<_>>()
+        .join("/");
+    prefix.is_empty()
+        || rel == prefix
+        || rel.starts_with(&format!("{prefix}/"))
+        || prefix.starts_with(&format!("{rel}/"))
+}
+
+fn segment_matches_glob(segment: &str, pattern: &str) -> bool {
+    // '*' matches any number of characters inside one path component.
+    // O(n*m), rather than backtracking recursively over attacker-sized names.
+    let word = segment.as_bytes();
+    let pat = pattern.as_bytes();
+    let mut prev = vec![false; word.len() + 1];
+    prev[0] = true;
+    for &p in pat {
+        let mut next = vec![false; word.len() + 1];
+        if p == b'*' {
+            next[0] = prev[0];
+            for i in 1..=word.len() {
+                next[i] = prev[i] || next[i - 1];
+            }
+        } else {
+            for i in 1..=word.len() {
+                next[i] = prev[i - 1] && word[i - 1] == p;
+            }
+        }
+        prev = next;
+    }
+    prev[word.len()]
+}
+
+fn path_matches_glob(rel: &str, pat: &str) -> bool {
+    let pattern: Vec<&str> = pat.split('/').collect();
+    let segments: Vec<&str> = rel.split('/').collect();
+    fn matches(pattern: &[&str], segments: &[&str]) -> bool {
+        let Some(head) = pattern.first() else {
+            return segments.is_empty();
+        };
+        if *head == "**" {
+            return (0..=segments.len()).any(|n| matches(&pattern[1..], &segments[n..]));
+        }
+        let Some(current) = segments.first() else {
+            return false;
+        };
+        segment_matches_glob(current, head) && matches(&pattern[1..], &segments[1..])
+    }
+    matches(&pattern, &segments)
+}
+
+/// Atomic API surface for one enumeration of the watched filesystem tree:
+/// the digest and the per-file hashes must refer to the *same* observation.
+#[derive(Debug, Default)]
+pub struct SubjectSnapshot {
+    pub digest: Option<String>,
+    pub files: std::collections::BTreeMap<String, String>,
+}
+
+pub fn subject_snapshot(spec: &VerifierSpec, workspace: &std::path::Path) -> SubjectSnapshot {
+    let Some(files) = observed_subject(spec, workspace) else {
+        return SubjectSnapshot::default();
+    };
+    let manifest = files
+        .iter()
+        .map(|(rel, hash)| format!("{rel}:{:?};", Some(hash)))
+        .collect::<String>();
+    SubjectSnapshot {
+        digest: Some(sha256_hex(manifest.as_bytes())),
+        files,
+    }
+}
+
+/// Stable per-file hashes of the watched subject, suitable for reporting
+/// added, removed, and modified files. Empty means no safely observed subject.
 pub fn artifact_hashes(
     spec: &VerifierSpec,
     workspace: &std::path::Path,
 ) -> std::collections::BTreeMap<String, String> {
-    if spec.files.is_empty() {
-        return Default::default();
-    }
-    let matches_glob = |rel: &str, pat: &str| -> bool {
-        let pat_parts: Vec<&str> = pat.split('/').collect();
-        let rel_parts: Vec<&str> = rel.split('/').collect();
-        fn m(p: &[&str], r: &[&str]) -> bool {
-            if p.is_empty() {
-                return r.is_empty();
-            }
-            match p[0] {
-                "**" => (0..=r.len()).any(|i| m(&p[1..], &r[i..])),
-                "*" => {
-                    if r.is_empty() {
-                        false
-                    } else {
-                        m(&p[1..], &r[1..])
-                    }
-                }
-                seg => r.first() == Some(&seg) && m(&p[1..], &r[1..]),
-            }
-        }
-        m(&pat_parts, &rel_parts)
-    };
-    let skip = ["target", ".git", ".uni", "evidence"];
-    let mut out = std::collections::BTreeMap::new();
-    let mut stack = vec![workspace.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        if let Ok(rd) = std::fs::read_dir(&dir) {
-            for entry in rd.flatten() {
-                let path = entry.path();
-                let rel = path
-                    .strip_prefix(workspace)
-                    .map(|p| p.to_string_lossy().replace('\\', "/"))
-                    .unwrap_or_default();
-                if path.is_dir() {
-                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if !skip.contains(&name) {
-                        stack.push(path);
-                    }
-                } else if spec.files.iter().any(|g| matches_glob(&rel, g)) {
-                    if let Ok(bytes) = std::fs::read(&path) {
-                        out.insert(rel, sha256_hex(&bytes));
-                    }
-                }
-            }
-        }
-    }
-    out
+    subject_snapshot(spec, workspace).files
 }
 
+/// Content-addressed digest of the exact same observed file set as
+/// artifact_hashes. Sorting eliminates filesystem enumeration order as input.
 pub fn artifact_hash(spec: &VerifierSpec, workspace: &std::path::Path) -> Option<String> {
-    if spec.files.is_empty() {
-        return None;
-    }
-    let matches_glob = |rel: &str, pat: &str| -> bool {
-        // tokenize both sides; '**' eats anything
-        let pat_parts: Vec<&str> = pat.split('/').collect();
-        let rel_parts: Vec<&str> = rel.split('/').collect();
-        fn m(p: &[&str], r: &[&str]) -> bool {
-            if p.is_empty() {
-                return r.is_empty();
-            }
-            match p[0] {
-                "**" => (0..=r.len()).any(|i| m(&p[1..], &r[i..])),
-                "*" => {
-                    if r.is_empty() {
-                        false
-                    } else {
-                        m(&p[1..], &r[1..])
-                    }
-                }
-                seg => r.first() == Some(&seg) && m(&p[1..], &r[1..]),
-            }
-        }
-        m(&pat_parts, &rel_parts)
-    };
-    let mut matched: Vec<(String, Option<String>)> = vec![];
-    let skip = ["target", ".git", ".uni"];
-    let mut stack = vec![workspace.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        if let Ok(rd) = std::fs::read_dir(&dir) {
-            for e in rd.flatten() {
-                let path = e.path();
-                // Glob patterns are written with '/', so normalize: on Windows
-                // `to_string_lossy` yields backslashes and every multi-segment
-                // pattern would silently match nothing.
-                let rel = path
-                    .strip_prefix(workspace)
-                    .map(|p| p.to_string_lossy().replace('\\', "/"))
-                    .unwrap_or_default();
-                if path.is_dir() {
-                    if !skip.contains(&path.file_name().and_then(|n| n.to_str()).unwrap_or("")) {
-                        stack.push(path.clone());
-                    }
-                } else if spec.files.iter().any(|g| matches_glob(&rel, g)) {
-                    let content = std::fs::read(&path).ok().map(|b| sha256_hex(&b));
-                    matched.push((rel, content));
-                }
-            }
-        }
-    }
-    // A declared watch that matches nothing is not a content binding: returning
-    // the hash of an empty string would pretend the subject was covered.
-    if matched.is_empty() {
-        return None;
-    }
-    let acc: String = matched
-        .iter()
-        .map(|(rel, h)| format!("{rel}:{h:?};"))
-        .collect();
-    Some(sha256_hex(acc.as_bytes()))
+    subject_snapshot(spec, workspace).digest
 }
 
 /// Cache-isolating identity of a verifier spec (prevents evidence reuse
@@ -409,8 +431,9 @@ pub fn run_spec(
         workspace,
     );
     ev.duration_ms = started.elapsed().as_millis();
-    ev.artifact_files = artifact_hashes(spec, workspace);
-    ev.artifact_hash = artifact_hash(spec, workspace).unwrap_or_default();
+    let subject = subject_snapshot(spec, workspace);
+    ev.artifact_files = subject.files;
+    ev.artifact_hash = subject.digest.unwrap_or_default();
     // Time dimension: a proof whose truth decays carries its own expiry, so the
     // loader needs no registry access to honour it.
     if spec.max_age_hours > 0 {
@@ -764,6 +787,67 @@ mod tests {
         assert_eq!(artifact_hash(&s, &d).unwrap(), h2);
     }
 
+    #[test]
+    fn watched_subject_supports_segment_wildcards_and_is_order_independent() {
+        let mut checksums = vec![];
+        for (case, names) in [("forward", ["a.rs", "z.rs"]), ("reverse", ["z.rs", "a.rs"])] {
+            let d = tmp(case);
+            std::fs::create_dir_all(d.join("src")).unwrap();
+            for name in names {
+                std::fs::write(d.join("src").join(name), name.as_bytes()).unwrap();
+            }
+            std::fs::write(d.join("src/ignored.txt"), "ignore").unwrap();
+            let mut s = spec("true");
+            s.files = vec!["src/*.rs".into()];
+            let watched = artifact_hashes(&s, &d);
+            assert_eq!(watched.len(), 2, "src/*.rs should cover both Rust files");
+            s.files = vec!["src/**".into()];
+            checksums.push(artifact_hash(&s, &d).expect("observed subject is hashable"));
+        }
+        assert_eq!(
+            checksums[0], checksums[1],
+            "identical subjects must hash identically across creation order"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watched_subject_refuses_symlinks_instead_of_following_outside_workspace() {
+        use std::os::unix::fs::symlink;
+
+        let d = tmp("symlink-escape");
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::create_dir_all(d.join("elsewhere")).unwrap();
+        std::fs::write(d.join("src/safe.txt"), "good").unwrap();
+        std::fs::write(d.join("elsewhere/secret.txt"), "outside subject").unwrap();
+
+        let mut s = spec("true");
+        s.files = vec!["src/**".into()];
+        // A symlinked file must not sneak into a trusted watched subject.
+        symlink(d.join("elsewhere/secret.txt"), d.join("src/alias.txt")).unwrap();
+        assert!(
+            artifact_hash(&s, &d).is_none(),
+            "a linked file must fail closed, not hash a target elsewhere"
+        );
+        let evidence = run_spec(
+            "watched",
+            "trusted",
+            &s,
+            &d,
+            30,
+            &uni_evidence::Actor::local(),
+            &uni_evidence::Actor::local(),
+        )
+        .unwrap();
+        assert_eq!(evidence.state, EvidenceState::Invalid);
+
+        std::fs::remove_file(d.join("src/alias.txt")).unwrap();
+        symlink(d.join("elsewhere"), d.join("src/external")).unwrap();
+        assert!(
+            artifact_hash(&s, &d).is_none(),
+            "directory links must never let watched globs escape the workspace"
+        );
+    }
     #[test]
     fn run_spec_applies_expect_matchers_on_full_output() {
         let d = tmp("run");

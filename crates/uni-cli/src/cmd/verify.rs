@@ -322,17 +322,16 @@ pub(crate) fn cmd_verify(
         };
         let binding_hash = resolution.binding_hash.clone();
         // content-bound evidence: hash computed from the verifier's watched files
-        let current_ah = resolved_spec
+        let subject = resolved_spec
             .as_ref()
-            .and_then(|spec| uni_verify::artifact_hash(spec, &ws));
+            .map(|spec| uni_verify::subject_snapshot(spec, &ws))
+            .unwrap_or_default();
+        let current_ah = subject.digest;
+        let current_af = subject.files;
         let fingerprint = match &resolved_spec {
             Some(spec) => uni_verify::spec_fingerprint(&v.verifier_ref, spec, &actor.id),
             None => format!("inline:{}:{}", v.verifier_ref, actor.id),
         };
-        let current_af = resolved_spec
-            .as_ref()
-            .map(|spec| uni_verify::artifact_hashes(spec, &ws))
-            .unwrap_or_default();
         let ctx = uni_evidence::EvidenceContext {
             fingerprint,
             commit_sha: cur_sha.clone(),
