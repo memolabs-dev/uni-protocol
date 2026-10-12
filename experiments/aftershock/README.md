@@ -78,3 +78,51 @@ Run `python3 experiments/aftershock/links.py --db snapshots/aftershock.db --note
 The explicit link auditor (`links.py`) now emits a `cycles` array for **every business cycle in the SQLite snapshot**, sorted by cycle ID. Each entry includes the timestamp, subject, verdict, recorded deposit flag, whether it is explicitly mapped, a `PASS` / `FAIL` / `UNLINKED` result, and issue codes. A `coverage` object shows `mapped` and `total`. `UNLINKED` never implies verified delivery; a subset manifest can still have overall `PASS` under the declared `EXPLICIT_LINKS_ONLY_NOT_SOURCE_TRUTH` scope, so set `all_cycles: true` to demand full coverage.
 
 The auditor checks file hashes, note identity, cited HTTPS URL presence and nonempty critic text. It **does not fetch URLs or independently prove source truth or the critic's reasoning quality**. No historical association is fabricated from subject names or timestamp similarity.
+
+## Native atomic receipts v2 — recommended integration
+
+The Aftershock producer has a proposed `aftershock.evidence/v2` receipt,
+generated **within the same SQLite transaction** as its business-cycle row.
+It records `cycle_id`, a producer OTLP `trace_id`, the exact note path and
+SHA-256, the draft's source URLs, and critic JSON plus canonical digest.
+
+`native.py` checks all business cycles in a **detached snapshot** against
+their receipts. Missing historical receipts are **UNVERIFIED**, never
+silently backfilled or assumed valid. A v1 receipt cannot pass the stronger
+v2 contract. It checks:
+
+- One receipt per business-cycle ID, valid 32-char trace ID, verdict agreement.
+- Exact SHA-256 of the deposited note bytes, bounded under the snapshot's
+  note directory. The producer's `/depot/FILE` path is rebased strictly to
+  the supplied snapshot root, not read from live `/depot`.
+- Note subject and critic verdict in frontmatter.
+- The JSON critic body inside the note matches `critic_payload` byte-for-
+  byte in meaning, and its SHA-256 matches the canonical payload.
+- HTTPS source URLs are well-formed and actually occur in the note.
+- Reject/revise non-publication is valid; malformed/unsupported claims fail.
+
+Example **read-only** invocation:
+
+~~~bash
+python3 experiments/aftershock/native.py \
+  --db snapshots/aftershock.db --notes-root snapshots/notes
+~~~
+
+Register the trusted named verifier in an isolated UNI workspace and then run
+`uni verify experiments/aftershock/native.uni`:
+
+~~~toml
+[verifiers."aftershock.native"]
+type = "shell"
+run = "python3 experiments/aftershock/native.py --db snapshots/aftershock.db --notes-root snapshots/notes"
+expect = "\"status\": \"PASS\""
+files = ["snapshots/aftershock.db", "snapshots/notes/**", "experiments/aftershock/native.py"]
+max_age_hours = 1
+~~~
+
+**Meaning of PASS:** evidence and artifacts are internally consistent.
+It does NOT attest that the trace was ingested by Langfuse, that a second LLM
+was independently invoked, that any cited page is correct, or that the
+producer was authorized. Those require separate trusted evidence and checks.
+This change never reads or modifies the production VPS and makes no claims
+about the pre-existing historical cycles.
