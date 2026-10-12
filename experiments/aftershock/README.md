@@ -64,3 +64,11 @@ LLM call occurred independently. The live server has not been inspected here;
 its SentinelX host is offline. First validate schema against a detached
 read-only production *copy* and test source-to-note correlation; only then
 consider a read-only agent observer adapter. No runtime changes or deployments.
+
+## Cycle-to-note-to-source-to-critic traceability
+
+Original Aftershock `cycle` rows contain no note filename or trace ID, and `dossier` has no cycle foreign key. Joining on subject and timestamp would invent a relationship. The optional `links.py` verifier therefore requires a separately reviewed JSON manifest (`uni.aftershock.links/v1`) naming each `cycle_id`, relative note path, SHA-256 of the exact note bytes, HTTPS source URLs, critic verdict and exact `dossier_vu_le` timestamp. See `links.uni` for the matching UNI claim.
+
+Example synthetic manifest: `{"schema":"uni.aftershock.links/v1","all_cycles":true,"cycles":[{"cycle_id":7,"note":"cycle.md","sha256":"<digest>","source_urls":["https://example.org/a"],"critic_verdict":"WATCH","dossier_vu_le":"2026-10-12T14:02:01+00:00"}]}`. This is an illustration, not a claim about real cycle 7.
+
+Run `python3 experiments/aftershock/links.py --db snapshots/aftershock.db --notes-root snapshots/notes --manifest snapshots/links.json` against detached copies only. The verifier checks note hashes, subject and critic verdict agreement, timestamp ordering, critic sections and non-placeholder content, declared URL occurrence, dossier uniqueness, and declared complete cycle coverage. `REJECT`/`REVISE` cycles legitimately may produce no note; they still require a dossier linkage. An ambiguous or missing link fails closed. URL occurrence does not validate source truth; critic text does not prove independent model execution. A future producer-side durable receipt with exact cycle, trace and note identifiers is needed for stronger assurance.

@@ -1,0 +1,12 @@
+VERSION 0.1
+DOMAIN software
+INTENT aftershock.cycle-traceability
+GOAL
+  Every declared business cycle has an explicit, checked note, source and critic linkage.
+CLAIM cycle-links REQUIRED
+  ENSURE business cycle identities, deposited notes, source URLs and critic records agree with an owner-reviewed link manifest
+VERIFY cycle-links
+  USING aftershock.links
+ACCEPT WHEN
+  required_claims == VERIFIED
+  AND critical_failures == 0
