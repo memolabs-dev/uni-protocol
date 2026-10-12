@@ -3,7 +3,7 @@
 ## Build UNI and verify the bundled example
 
 ```bash
-git clone https://github.com/guillaume-flambard/uni-protocol.git
+git clone https://github.com/memolabs-dev/uni-protocol.git
 cd uni-protocol
 cargo build --release
 ./target/release/uni lint   examples/hello/hello.uni   # preflight, no execution

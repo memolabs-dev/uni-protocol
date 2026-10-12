@@ -13,7 +13,7 @@ inputs:
   repository:
     description: "owner/repo hosting UNI releases (replace when publishing your own fork)"
     required: false
-    default: "guillaume-flambard/uni-protocol"
+    default: "memolabs-dev/uni-protocol"
   report-to-summary:
     description: "Append the stable UNI Assurance view to the job summary"
     required: false
