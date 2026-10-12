@@ -127,7 +127,23 @@ def verify(db_path, notes_root, manifest_path):
     # unless its IDs actually cover every business cycle.
     if manifest.get("all_cycles") is True and seen != set(db_rows):
         issue(None, "cycles_omitted", "all_cycles asserted but some business cycle IDs are absent")
+    per_cycle = []
+    for ident in sorted(db_rows):
+        record = db_rows[ident]
+        related = [f for f in findings if f.get("cycle_id") == ident]
+        declared = ident in seen
+        per_cycle.append({
+            "cycle_id": ident,
+            "subject": record[2],
+            "observed_at": record[1],
+            "verdict": record[3],
+            "deposit_recorded": record[4] == "1",
+            "mapping_declared": declared,
+            "status": "UNLINKED" if not declared else "FAIL" if related else "PASS",
+            "issues": [f["kind"] for f in related],
+        })
     return {"status": "FAIL" if findings else "PASS", "checked": checked, "findings": findings,
+            "cycles": per_cycle, "coverage": {"mapped": len(seen & set(db_rows)), "total": len(db_rows)},
             "scope": "EXPLICIT_LINKS_ONLY_NOT_SOURCE_TRUTH"}
 
 

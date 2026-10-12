@@ -105,6 +105,16 @@ source: aftershock (lab), cycle automatique
         self.mapping["cycles"][0].pop("dossier_vu_le")
         self.assertIn("dossier_unlinked", self.kinds())
 
+    def test_each_cycle_has_an_explicit_audit_row(self):
+        result = self.check()
+        self.assertEqual(result["coverage"], {"mapped": 1, "total": 1})
+        self.assertEqual(result["cycles"][0]["cycle_id"], 7)
+        self.assertEqual(result["cycles"][0]["status"], "PASS")
+        self.note.write_text(self.note.read_text() + "\\nmodified")
+        result = self.check()
+        self.assertEqual(result["cycles"][0]["status"], "FAIL")
+        self.assertIn("note_digest_mismatch", result["cycles"][0]["issues"])
+
     def test_unpublished_reject_does_not_need_note(self):
         with sqlite3.connect(self.db) as db:
             db.execute("UPDATE cycle SET verdict='REJECT',ecrit='0' WHERE id=7")
