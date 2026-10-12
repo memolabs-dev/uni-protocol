@@ -192,7 +192,14 @@ fn observed_subject(
     spec: &VerifierSpec,
     workspace: &std::path::Path,
 ) -> Option<std::collections::BTreeMap<String, String>> {
-    if spec.files.is_empty() {
+    // File-hash always observes its expected paths, even when a registry
+    // author omits the optional files list. Otherwise the adapter can pass
+    // without any content binding and incorrectly reuse a cached proof.
+    let mut patterns = spec.files.clone();
+    if spec.kind == "file-hash" {
+        patterns.extend(spec.expect_sha256.keys().cloned());
+    }
+    if patterns.is_empty() {
         return None;
     }
     let root = std::fs::canonicalize(workspace).ok()?;
@@ -215,7 +222,7 @@ fn observed_subject(
                 // A linked directory could introduce entire unobserved subtrees
                 // and a linked file could escape the workspace. Reject links
                 // anywhere under the non-wildcard prefix of a watched glob.
-                if spec.files.iter().any(|pat| symlink_may_affect(&rel, pat)) {
+                if patterns.iter().any(|pat| symlink_may_affect(&rel, pat)) {
                     return None;
                 }
                 continue;
@@ -225,7 +232,7 @@ fn observed_subject(
                 if !skip.contains(&name) {
                     stack.push(path);
                 }
-            } else if spec.files.iter().any(|pat| path_matches_glob(&rel, pat)) {
+            } else if patterns.iter().any(|pat| path_matches_glob(&rel, pat)) {
                 if !ty.is_file() {
                     return None;
                 }
@@ -486,6 +493,35 @@ pub struct VerifierOutcome {
 pub struct ShellVerifier;
 pub struct FileHashVerifier;
 
+/// File-hash is a local adapter: neither an absolute path, a parent traversal,
+/// nor a symlink in any path component may redirect an expected file outside
+/// the workspace (even when the expected digest happens to match).
+fn checked_file_hash_path(
+    workspace: &std::path::Path,
+    relative: &str,
+) -> Result<std::path::PathBuf> {
+    use std::path::Component;
+    let path = std::path::Path::new(relative);
+    if relative.is_empty()
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(anyhow!(
+            "expected file path must be workspace-relative without traversal"
+        ));
+    }
+    let mut resolved = std::fs::canonicalize(workspace)?;
+    for component in path.components() {
+        resolved.push(component.as_os_str());
+        let info = std::fs::symlink_metadata(&resolved)?;
+        if info.file_type().is_symlink() {
+            return Err(anyhow!("expected file path crosses a symlink"));
+        }
+    }
+    Ok(resolved)
+}
+
 impl Verifier for ShellVerifier {
     fn name(&self) -> &'static str {
         "shell-verifier"
@@ -515,7 +551,21 @@ impl Verifier for FileHashVerifier {
         let mut lines = vec![];
         let mut ok = true;
         for (rel, expected) in &spec.expect_sha256 {
-            let path = workspace.join(rel);
+            let path = match checked_file_hash_path(workspace, rel) {
+                Ok(path) => path,
+                Err(reason) => {
+                    ok = false;
+                    let missing = reason
+                        .downcast_ref::<std::io::Error>()
+                        .map(|error| error.kind() == std::io::ErrorKind::NotFound)
+                        .unwrap_or(false);
+                    lines.push(format!(
+                        "{rel}: {} ({reason})",
+                        if missing { "MISSING" } else { "UNSAFE" }
+                    ));
+                    continue;
+                }
+            };
             match std::fs::read(&path) {
                 Ok(bytes) => {
                     let actual = sha256_hex(&bytes);
@@ -1000,6 +1050,71 @@ mod tests {
         assert!(ev3.output_excerpt.contains("MISSING"));
     }
 
+    #[test]
+    fn file_hash_without_files_glob_is_still_bound_to_expected_content() {
+        let d = tmp("file-hash-inferred-watch");
+        std::fs::write(d.join("invoice.csv"), "invoice,v1").unwrap();
+        let mut s = file_hash_spec("invoice.csv", &sha256_hex(b"invoice,v1"));
+        s.files.clear(); // Table-form expect_sha256 permits omitting files.
+        let evidence = run_spec(
+            "invoice",
+            "owner.sha",
+            &s,
+            &d,
+            30,
+            &uni_evidence::Actor::local(),
+            &uni_evidence::Actor::local(),
+        )
+        .unwrap();
+        assert_eq!(evidence.state, EvidenceState::Valid);
+        assert!(
+            !evidence.artifact_hash.is_empty(),
+            "hash evidence must bind the file"
+        );
+        assert!(evidence.artifact_files.contains_key("invoice.csv"));
+        std::fs::write(d.join("invoice.csv"), "invoice,v2").unwrap();
+        assert_ne!(artifact_hash(&s, &d).unwrap(), evidence.artifact_hash);
+    }
+
+    #[test]
+    fn file_hash_rejects_parent_directory_escape_even_if_digest_matches() {
+        let d = tmp("file-hash-parent-escape");
+        let external = d
+            .parent()
+            .unwrap()
+            .join(format!("uni-external-hash-{}", std::process::id()));
+        std::fs::write(&external, "outside owner workspace").unwrap();
+        let rel = format!("../{}", external.file_name().unwrap().to_string_lossy());
+        let mut s = file_hash_spec(&rel, &sha256_hex(b"outside owner workspace"));
+        s.files.clear();
+        let outcome = FileHashVerifier.run(&s, &d).unwrap();
+        assert_eq!(outcome.state, EvidenceState::Invalid);
+        std::fs::remove_file(external).unwrap();
+    }
+
+    #[test]
+    fn file_hash_rejects_absolute_paths_even_if_digest_matches() {
+        let d = tmp("file-hash-absolute");
+        let absolute = d.join("owned.txt");
+        std::fs::write(&absolute, "safe").unwrap();
+        let mut s = file_hash_spec(&absolute.to_string_lossy(), &sha256_hex(b"safe"));
+        s.files.clear();
+        let outcome = FileHashVerifier.run(&s, &d).unwrap();
+        assert_eq!(outcome.state, EvidenceState::Invalid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_hash_rejects_symlink_even_when_it_points_inside_workspace() {
+        use std::os::unix::fs::symlink;
+        let d = tmp("file-hash-symlink");
+        std::fs::write(d.join("owned.txt"), "safe").unwrap();
+        symlink(d.join("owned.txt"), d.join("alias.txt")).unwrap();
+        let mut s = file_hash_spec("alias.txt", &sha256_hex(b"safe"));
+        s.files.clear();
+        let outcome = FileHashVerifier.run(&s, &d).unwrap();
+        assert_eq!(outcome.state, EvidenceState::Invalid);
+    }
     #[test]
     fn registry_parses_file_hash_kind() {
         let d = tmp("reg-fh");

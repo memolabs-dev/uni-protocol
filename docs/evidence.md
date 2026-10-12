@@ -60,6 +60,10 @@ seven dimensions (Verification Context, v0.2):
    does not follow symlinked subjects outside the workspace. As before,
    build caches, Git metadata, and UNI runtime output are not watched.
    Changes to a watched subject invalidate previously accepted evidence.
+   File-hash verifier entries also bind every path in `expect_sha256`, even if
+   `files` is omitted; parent traversal, absolute paths and symlink components
+   are refused by the built-in adapter. Paths outside the workspace do not
+   produce acceptable evidence.
    This does not make claims about untracked content outside the declared scope.
 3. **Context binding** (`contract_hash`, `registry_hash`, `platform`): editing
    the contract, touching any registry entry, or moving across platforms

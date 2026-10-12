@@ -84,3 +84,16 @@ Given a fixture workspace + a fixed contract, assert the produced
 internals (same rule the core follows: test `assure_contract` and `evaluate`,
 not the parser or the store).
 `crates/uni-verify` unit tests are the model: `file_hash_adapter_matches_and_mismatches`.
+
+## File-hash path safety
+
+The built-in `file-hash` adapter only reads regular workspace-relative files.
+It refuses absolute paths, parent-directory traversal and symlink components,
+even if the content hash would match. Every path in `expect_sha256` is included
+in the observed subject and therefore invalidates cached proof on drift, even
+if `files` was omitted in the trusted registry. On an unsafe, unreadable or
+missing file the verification cannot be accepted; missing-file diagnostics
+retain the `MISSING` label.
+
+This is a conservative trust boundary. If a project uses symlinked artifacts,
+materialize the artifact in the workspace and verify that regular file.
