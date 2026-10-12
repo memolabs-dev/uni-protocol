@@ -70,3 +70,9 @@ uni explain
 
 The registry maps stable verifier names to commands. The contract names those
 verifiers but cannot introduce a new command.
+
+## Optional acceptance coverage
+
+An owner-maintained criteria manifest can be checked with `uni coverage contract.uni --manifest owner.toml` and enforced using `uni verify contract.uni --acceptance owner.toml`.
+
+This is opt-in for backward compatibility. See [acceptance coverage](acceptance.md) for its format, failure semantics and limitations.

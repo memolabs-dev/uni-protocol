@@ -14,8 +14,32 @@ pub(crate) fn cmd_run(
     timeout_ms: u64,
     brief: bool,
     as_json: bool,
+    acceptance: Option<&Path>,
 ) -> Result<()> {
     use std::process::Stdio;
+    if let Some(manifest) = acceptance {
+        // Reject an incomplete declared scope *before* running the executor;
+        // verification repeats this after the executor in case it edited files.
+        let (ir, _) = crate::cmd::contract::load_contract(file)?;
+        let registry = uni_verify::load_registry(&dot_uni());
+        let report = crate::cmd::coverage::analyze(&ir, &registry, manifest)?;
+        if !report.complete() {
+            if as_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "intent": ir.intent.id,
+                        "decision": "EvidenceRequired",
+                        "reason": "declared acceptance coverage incomplete before execution",
+                        "coverage": report
+                    })
+                );
+            } else {
+                crate::cmd::coverage::print_coverage(&report, false);
+            }
+            return Err(anyhow!("UNI acceptance coverage INCOMPLETE"));
+        }
+    }
     let ws = std::env::current_dir()?;
     let started = std::time::Instant::now();
 
@@ -90,7 +114,7 @@ pub(crate) fn cmd_run(
     let _ = journal_path;
 
     // The executor's exit code is data, not truth: the decision is the verdict.
-    cmd_verify(file, as_json, actor, false)
+    cmd_verify(file, as_json, actor, false, acceptance)
 }
 
 /// Authorized resolution of a claim's verification (v0.4).
@@ -151,6 +175,7 @@ pub(crate) fn cmd_verify(
     as_json: bool,
     actor_flag: Option<&str>,
     attest: bool,
+    acceptance: Option<&Path>,
 ) -> Result<()> {
     if attest {
         return Err(anyhow!(
@@ -158,6 +183,31 @@ pub(crate) fn cmd_verify(
         ));
     }
     let (ir, _) = crate::cmd::contract::load_contract(file)?;
+    // Audit declared owner criteria before executing *any* verifier.
+    // An incomplete manifest must never be presented as accepted.
+    let owner_coverage = if let Some(manifest) = acceptance {
+        let registry = uni_verify::load_registry(&dot_uni());
+        let report = crate::cmd::coverage::analyze(&ir, &registry, manifest)?;
+        if !report.complete() {
+            if as_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "intent": ir.intent.id,
+                        "decision": "EvidenceRequired",
+                        "reason": "declared acceptance coverage incomplete",
+                        "coverage": report,
+                    })
+                );
+            } else {
+                crate::cmd::coverage::print_coverage(&report, false);
+            }
+            return Err(anyhow!("UNI acceptance coverage INCOMPLETE"));
+        }
+        Some(report)
+    } else {
+        None
+    };
     let ws = std::env::current_dir()?;
     let du = dot_uni();
     // B3 actor model: the executor is whoever runs this command (local,
@@ -565,17 +615,19 @@ pub(crate) fn cmd_verify(
         std::fs::write(du.join(".registry.snapshot.toml"), &registry_text)?;
     }
     if as_json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "intent": ir.intent.id,
-                "decision": decision.decision,
-                "reason": decision.reason,
-                "claims": decision.claims,
-                "evidence": stored,
-                "trust_boundary_changed": trust_boundary_changed,
-            })
-        );
+        let mut result = serde_json::json!({
+            "intent": ir.intent.id,
+            "decision": decision.decision,
+            "reason": decision.reason,
+            "claims": decision.claims,
+            "evidence": stored,
+            "trust_boundary_changed": trust_boundary_changed,
+        });
+        // Preserve the existing JSON shape unless acceptance was opted in.
+        if let Some(coverage) = owner_coverage {
+            result["coverage"] = serde_json::to_value(coverage)?;
+        }
+        println!("{result}");
     } else {
         println!("\nUNI Verification — {}", ir.intent.id);
         for c in &decision.claims {

@@ -35,6 +35,9 @@ enum Cmd {
     },
     Verify {
         file: PathBuf,
+        /// Owner-maintained acceptance manifest. Missing mapped criteria fail closed.
+        #[arg(long)]
+        acceptance: Option<PathBuf>,
         /// Verifier actor identity (e.g. ci:build-12). Always self-declared:
         /// a flag names an actor, it never proves one. Only a JWT in
         /// UNI_IDENTITY_TOKEN, verified against a pinned issuer, reaches A3.
@@ -43,6 +46,12 @@ enum Cmd {
         /// Reserved: signed provenance (A4) has no producer yet.
         #[arg(long, default_value_t = false)]
         attest: bool,
+    },
+    /// Audit the declared acceptance scope, without running verifiers.
+    Coverage {
+        file: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
     },
     Explain {
         claim_or_intent: Option<String>,
@@ -95,6 +104,9 @@ enum Cmd {
     /// half of the loop. UNI integrates no agent; you pass the command.
     Run {
         file: PathBuf,
+        /// Owner-maintained acceptance manifest used by post-run verification.
+        #[arg(long)]
+        acceptance: Option<PathBuf>,
         /// The command to run, as a shell command line (quote it yourself).
         #[arg(last = true, required = true)]
         command: Vec<String>,
@@ -133,7 +145,15 @@ fn main() -> Result<()> {
             file,
             actor,
             attest,
-        } => cmd::verify::cmd_verify(&file, cli.json, actor.as_deref(), attest),
+            acceptance,
+        } => cmd::verify::cmd_verify(
+            &file,
+            cli.json,
+            actor.as_deref(),
+            attest,
+            acceptance.as_deref(),
+        ),
+        Cmd::Coverage { file, manifest } => cmd::coverage::cmd_coverage(&file, &manifest, cli.json),
         Cmd::Explain {
             claim_or_intent,
             annotations,
@@ -168,6 +188,7 @@ fn main() -> Result<()> {
             actor,
             timeout_ms,
             brief,
+            acceptance,
         } => cmd::verify::cmd_run(
             &file,
             &command.join(" "),
@@ -175,6 +196,7 @@ fn main() -> Result<()> {
             timeout_ms,
             brief,
             cli.json,
+            acceptance.as_deref(),
         ),
     }
 }

@@ -115,7 +115,7 @@ evidence invalidation by SHA-256 over watched files.
 
 ## Product direction
 
-Memo Labs Dev maintains UNI as a standalone outcome-assurance layer. See the [roadmap](docs/roadmap.md) and [October 2026 research snapshot](docs/research/outcome-assurance-landscape-2026-10.md).
+Memo Labs Dev maintains UNI as a standalone outcome-assurance layer. See the [roadmap](docs/roadmap.md) and [acceptance coverage](docs/acceptance.md) and [October 2026 research snapshot](docs/research/outcome-assurance-landscape-2026-10.md).
 
 ## Documentation
 

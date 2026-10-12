@@ -1,0 +1,309 @@
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+mod support;
+
+fn fixture() -> PathBuf {
+    let time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "uni-coverage-{}-{time}-{sequence}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(dir.join(".uni")).unwrap();
+    std::fs::write(dir.join("artifact.txt"), "published").unwrap();
+    let hash = uni_evidence::sha256_hex(b"published");
+    std::fs::write(dir.join(".uni/config.toml"), format!(
+        "[verifiers.\"owner.valid\"]\ntype = \"file-hash\"\nfiles = [\"artifact.txt\"]\nexpect_sha256 = {{ \"artifact.txt\" = \"{hash}\" }}\n"
+    )).unwrap();
+    std::fs::write(dir.join("contract.uni"), "VERSION 0.1\nDOMAIN software\nINTENT ledger\nGOAL\n  Deliver an accounted ledger.\nCLAIM regular REQUIRED\n  ENSURE regular credits and debits work\nVERIFY regular\n  USING owner.valid\nACCEPT WHEN\n  required_claims == VERIFIED\n  AND critical_failures == 0\n").unwrap();
+    dir
+}
+
+fn criteria_line(id: &str, claim: &str, ensure: &str, verifier: &str) -> String {
+    format!("\n[[criteria]]\nid = \"{id}\"\nclaim = \"{claim}\"\nensure = \"{ensure}\"\nverifier = \"{verifier}\"\n")
+}
+
+fn manifest(dir: &Path, more: &str) {
+    std::fs::write(
+        dir.join("owner.toml"),
+        format!(
+            "version = 1\nintent = \"ledger\"\n{}{}",
+            criteria_line(
+                "regular",
+                "regular",
+                "regular credits and debits work",
+                "owner.valid"
+            ),
+            more
+        ),
+    )
+    .unwrap();
+}
+
+fn cli(dir: &Path, args: &[&str]) -> (bool, serde_json::Value) {
+    let out = Command::new(support::bin())
+        .arg("--json")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    let body = String::from_utf8_lossy(&out.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or_else(|_| {
+        panic!(
+            "CLI did not return JSON: stdout={body}, stderr={}",
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
+    (out.status.success(), parsed)
+}
+
+#[test]
+fn declared_coverage_complete_and_verify_with_opt_in_gate() {
+    let dir = fixture();
+    manifest(&dir, "");
+    let (passed, coverage) = cli(
+        &dir,
+        &["coverage", "contract.uni", "--manifest", "owner.toml"],
+    );
+    assert!(passed);
+    assert_eq!(coverage["status"], "COMPLETE");
+    assert_eq!(coverage["declared"], 1);
+    assert_eq!(coverage["mapped"], 1);
+    assert_eq!(coverage["authority"], "CALLER_SUPPLIED_NOT_AUTHENTICATED");
+    assert_eq!(coverage["scope"], "DECLARED_CRITERIA_ONLY");
+    assert_eq!(coverage["manifest_sha256"].as_str().unwrap().len(), 64);
+    let (accepted, verify) = cli(
+        &dir,
+        &["verify", "contract.uni", "--acceptance", "owner.toml"],
+    );
+    assert!(accepted, "{}", verify);
+    assert_eq!(verify["decision"], "Accepted");
+    assert_eq!(verify["coverage"]["status"], "COMPLETE");
+}
+
+#[test]
+fn omitted_owner_invariant_blocks_verification_before_evidence_runs() {
+    let dir = fixture();
+    let other = criteria_line(
+        "overdraft",
+        "overdraft",
+        "overdraft must be refused",
+        "owner.valid",
+    );
+    manifest(&dir, &other);
+    let (passed, coverage) = cli(
+        &dir,
+        &["coverage", "contract.uni", "--manifest", "owner.toml"],
+    );
+    assert!(!passed);
+    assert_eq!(coverage["status"], "INCOMPLETE");
+    assert_eq!(coverage["declared"], 2);
+    assert_eq!(coverage["mapped"], 1);
+    assert_eq!(coverage["findings"][0]["kind"], "missing_claim");
+    let (accepted, verify) = cli(
+        &dir,
+        &["verify", "contract.uni", "--acceptance", "owner.toml"],
+    );
+    assert!(!accepted);
+    assert_eq!(verify["decision"], "EvidenceRequired");
+    assert_eq!(verify["coverage"]["status"], "INCOMPLETE");
+    assert!(
+        !dir.join(".uni/evidence").exists(),
+        "verifiers may not execute before coverage preflight"
+    );
+    let (legacy, result) = cli(&dir, &["verify", "contract.uni"]);
+    assert!(legacy, "{result}");
+    assert_eq!(result["decision"], "Accepted");
+    assert!(
+        result.get("coverage").is_none(),
+        "legacy JSON shape must remain unchanged"
+    );
+}
+
+#[test]
+fn duplicate_criterion_id_is_rejected() {
+    let dir = fixture();
+    manifest(
+        &dir,
+        &criteria_line(
+            "regular",
+            "other",
+            "regular credits and debits work",
+            "owner.valid",
+        ),
+    );
+    let (ok, report) = cli(
+        &dir,
+        &["coverage", "contract.uni", "--manifest", "owner.toml"],
+    );
+    assert!(!ok);
+    assert!(report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["kind"] == "duplicate_or_empty_id"));
+}
+
+#[test]
+fn duplicate_claim_mapping_is_rejected() {
+    let dir = fixture();
+    manifest(
+        &dir,
+        &criteria_line(
+            "another",
+            "regular",
+            "regular credits and debits work",
+            "owner.valid",
+        ),
+    );
+    let (ok, report) = cli(
+        &dir,
+        &["coverage", "contract.uni", "--manifest", "owner.toml"],
+    );
+    assert!(!ok);
+    assert!(report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["kind"] == "duplicate_or_empty_claim"));
+}
+
+#[test]
+fn tampered_owner_wording_is_rejected() {
+    let dir = fixture();
+    manifest(&dir, "");
+    let body = std::fs::read_to_string(dir.join("contract.uni"))
+        .unwrap()
+        .replace("regular credits and debits work", "anything works");
+    std::fs::write(dir.join("contract.uni"), body).unwrap();
+    let (ok, report) = cli(
+        &dir,
+        &["coverage", "contract.uni", "--manifest", "owner.toml"],
+    );
+    assert!(!ok);
+    assert_eq!(report["findings"][0]["kind"], "ensure_mismatch");
+}
+
+#[test]
+fn verifier_mapping_must_be_trusted_and_present() {
+    let dir = fixture();
+    let content = format!(
+        "version = 1\nintent = \"ledger\"\n{}",
+        criteria_line(
+            "regular",
+            "regular",
+            "regular credits and debits work",
+            "ghost.verifier"
+        )
+    );
+    std::fs::write(dir.join("owner.toml"), content).unwrap();
+    let (ok, report) = cli(
+        &dir,
+        &["coverage", "contract.uni", "--manifest", "owner.toml"],
+    );
+    assert!(!ok);
+    assert_eq!(report["findings"][0]["kind"], "missing_verifier");
+    let source = std::fs::read_to_string(dir.join("contract.uni"))
+        .unwrap()
+        .replace("owner.valid", "ghost.verifier");
+    std::fs::write(dir.join("contract.uni"), source).unwrap();
+    let (ok, report) = cli(
+        &dir,
+        &["coverage", "contract.uni", "--manifest", "owner.toml"],
+    );
+    assert!(!ok);
+    assert_eq!(report["findings"][0]["kind"], "untrusted_verifier");
+}
+
+#[test]
+fn unknown_manifest_keys_and_wrong_intent_are_rejected() {
+    let dir = fixture();
+    manifest(&dir, "");
+    let old = std::fs::read_to_string(dir.join("owner.toml")).unwrap();
+    std::fs::write(dir.join("owner.toml"), format!("{old}trusted = true\n")).unwrap();
+    let output = Command::new(support::bin())
+        .args([
+            "--json",
+            "coverage",
+            "contract.uni",
+            "--manifest",
+            "owner.toml",
+        ])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    std::fs::write(
+        dir.join("owner.toml"),
+        old.replace("intent = \"ledger\"", "intent = \"other\""),
+    )
+    .unwrap();
+    let (ok, report) = cli(
+        &dir,
+        &["coverage", "contract.uni", "--manifest", "owner.toml"],
+    );
+    assert!(!ok);
+    assert_eq!(report["findings"][0]["kind"], "intent_mismatch");
+}
+
+#[test]
+fn empty_manifest_and_unsupported_version_fail_closed() {
+    let dir = fixture();
+    std::fs::write(dir.join("owner.toml"), "version = 1\nintent = \"ledger\"\n").unwrap();
+    let (ok, report) = cli(
+        &dir,
+        &["coverage", "contract.uni", "--manifest", "owner.toml"],
+    );
+    assert!(!ok);
+    assert_eq!(report["findings"][0]["kind"], "empty_manifest");
+    manifest(&dir, "");
+    let old = std::fs::read_to_string(dir.join("owner.toml")).unwrap();
+    std::fs::write(
+        dir.join("owner.toml"),
+        old.replace("version = 1", "version = 2"),
+    )
+    .unwrap();
+    let (ok, report) = cli(
+        &dir,
+        &["coverage", "contract.uni", "--manifest", "owner.toml"],
+    );
+    assert!(!ok);
+    assert_eq!(report["findings"][0]["kind"], "unsupported_version");
+}
+
+#[cfg(not(windows))]
+#[test]
+fn incomplete_acceptance_blocks_an_executor_before_side_effects() {
+    let dir = fixture();
+    manifest(
+        &dir,
+        &criteria_line(
+            "overdraft",
+            "overdraft",
+            "overdraft must be refused",
+            "owner.valid",
+        ),
+    );
+    let (accepted, report) = cli(
+        &dir,
+        &[
+            "run",
+            "contract.uni",
+            "--acceptance",
+            "owner.toml",
+            "--",
+            "touch cannot-have-run.txt",
+        ],
+    );
+    assert!(!accepted);
+    assert_eq!(report["coverage"]["status"], "INCOMPLETE");
+    assert!(!dir.join("cannot-have-run.txt").exists());
+}

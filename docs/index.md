@@ -6,6 +6,7 @@
 | [quickstart.md](quickstart.md) | 60-second loop: init, lint, verify, report |
 | [language.md](language.md) | the closed `.uni` vocabulary v0.1 |
 | [claims.md](claims.md) | CLAIM / INVARIANT / FORBID / REQUIRE semantics |
+| [acceptance.md](acceptance.md) | owner-reviewed acceptance coverage gate (optional) |
 | [evidence.md](evidence.md) | evidence shape, states, git + content invalidation |
 | [verification.md](verification.md) | trusted registry, expect matchers, the trust boundary |
 | [decisions.md](decisions.md) | truth table, policy layer, exit-code semantics, the assurance scale and how A3 is earned |
