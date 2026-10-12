@@ -3,6 +3,7 @@
 //! artifacts, the pack registry, and the Spec Kit import.
 pub mod authorize;
 pub mod contract;
+pub mod coverage;
 pub mod handoff;
 pub mod journal;
 pub mod pack;
