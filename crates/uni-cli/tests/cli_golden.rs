@@ -316,6 +316,57 @@ VERIFY x
     assert_eq!(o2.status.code(), Some(0), "{o2:?}");
 }
 
+#[test]
+fn lint_warns_when_verifier_glob_matches_no_sources() {
+    let dir = std::env::temp_dir().join(format!(
+        "uni-lint-empty-watcher-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(dir.join(".uni")).unwrap();
+    std::fs::write(
+        dir.join(".uni/config.toml"),
+        "[verifiers.watch]\nrun = \"true\"\nfiles = [\"tests/*.py\"]\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("contract.uni"),
+        "VERSION 0.1\nDOMAIN software\nINTENT lint-glob\nGOAL\n  Check source.\nCLAIM a REQUIRED\n  ENSURE test passes\nVERIFY a\n  USING watch\n",
+    ).unwrap();
+    let first = Command::new(bin())
+        .args(["lint", "contract.uni", "--json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(first.status.success(), "{first:?}");
+    let finding: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert!(
+        finding["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["kind"] == "empty-watched-subject"),
+        "{finding}"
+    );
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(dir.join("tests/a.py"), "pass").unwrap();
+    let second = Command::new(bin())
+        .args(["lint", "contract.uni", "--json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let clean: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert!(
+        !clean["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["kind"] == "empty-watched-subject"),
+        "{clean}"
+    );
+}
+
 /// ADR-002: lint names a pinned test name as a contract smell (warning only,
 /// the decision is untouched), and stays silent on suites and templates.
 #[test]
