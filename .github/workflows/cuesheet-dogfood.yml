@@ -1,0 +1,49 @@
+name: CUESHEET owner-acceptance dogfood
+
+# Explicitly invoked because it clones a separate public project and deliberately
+# breaks only its disposable copy. Not a required UNI production gate.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cuesheet:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout UNI owner contract
+        uses: actions/checkout@v4
+      - name: Checkout bounded CUESHEET revision
+        uses: actions/checkout@v4
+        with:
+          repository: memolabs-dev/cuesheet
+          ref: d07c3d5ffc3b67b8046da454a4d1c78f465b2961
+          path: cuesheet
+          persist-credentials: false
+      - name: Node for independent CUESHEET verifier
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build UNI
+        run: cargo build --release -p uni-cli
+      - name: Independent declared-scope acceptance and deliberate drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 experiments/cuesheet-dogfood/demo.py \
+            --cuesheet cuesheet \
+            --uni target/release/uni \
+            --expected-revision d07c3d5ffc3b67b8046da454a4d1c78f465b2961 \
+            | tee "$RUNNER_TEMP/cuesheet-uni-dogfood.log"
+          {
+            echo "### CUESHEET × UNI bounded pilot"
+            echo ""
+            echo "Declared-scope demo, not a real-agent benchmark or full PR release gate."
+            echo '## Observations'
+            echo '~~~json'
+            tail -n 1 "$RUNNER_TEMP/cuesheet-uni-dogfood.log"
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"

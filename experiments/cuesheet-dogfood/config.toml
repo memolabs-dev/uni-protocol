@@ -1,0 +1,6 @@
+# Owner-controlled verifier, never generated or approved by the worker.
+[verifiers."owner.code-worker-loop"]
+run = "node --test test/code-worker-loop.test.ts"
+expect = "pass 7"
+files = ["src/adapters/code-worker-loop.ts", "test/code-worker-loop.test.ts"]
+timeout = 60

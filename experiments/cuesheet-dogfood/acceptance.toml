@@ -1,0 +1,8 @@
+version = 1
+intent = "cuesheet.worker-loop"
+
+[[criteria]]
+id = "worker-loop"
+claim = "worker-loop"
+ensure = "simultaneous and cancelled worker effects never forge completion receipts"
+verifier = "owner.code-worker-loop"
