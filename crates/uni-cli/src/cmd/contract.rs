@@ -96,6 +96,39 @@ pub(crate) fn cmd_lint(file: &Path, as_json: bool) -> Result<()> {
             ));
         }
     }
+    // A zero-match watcher is a common configuration error: lint reports it
+    // before the verifier runs. This remains a warning, because a verifier
+    // may legitimately generate a watched artifact during its execution.
+    for v in &ir.verification {
+        let Some(spec) = registry.get(&v.verifier_ref) else {
+            continue;
+        };
+        let patterns = if spec.files.is_empty() && spec.kind == "file-hash" {
+            spec.expect_sha256.keys().cloned().collect::<Vec<_>>()
+        } else {
+            spec.files.clone()
+        };
+        for pattern in patterns {
+            let mut single = spec.clone();
+            single.kind = "shell".to_string();
+            single.expect_sha256.clear();
+            single.files = vec![pattern.clone()];
+            if uni_verify::subject_snapshot(&single, Path::new("."))
+                .digest
+                .is_none()
+            {
+                push!(
+                    1,
+                    "empty-watched-subject",
+                    &v.claim_id,
+                    format!(
+                        "claim '{}' verifier '{}' watches '{}' but no safe matching files were observed (Git tracked-only mode requires git add); check scope before verify",
+                        v.claim_id, v.verifier_ref, pattern
+                    )
+                );
+            }
+        }
+    }
     let selector_flagged: Vec<String> = findings
         .iter()
         .filter(|f| f.kind == "selector-template")

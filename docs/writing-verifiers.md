@@ -18,6 +18,34 @@ run = "! grep -RIn 'AKIA[0-9A-Z]\\{16\\}' ."
 expect_not = "AKIA"
 ```
 
+### Content-bound watcher scope
+
+The `files` patterns use slash-separated paths relative to the workspace.
+`*` matches within **one** path component (so `tests/*.py` works), and
+`**` matches zero or more components (so `tests/**` is recursive).
+By default UNI watches every matching regular file, including gitignored
+backups and caches. It fails closed for unsafe symlinks and when the watched
+subject is empty; `uni lint` warns about zero-match patterns without running
+the verifier.
+
+For **repository source files**, the trusted registry can opt into:
+
+```toml
+[verifiers."python.tests"]
+run = "python -m unittest discover"
+files = ["tests/**/*.py", "src/**/*.py"]
+tracked_only = true
+```
+
+This hashes only Git-indexed paths, including modified/staged worktree files.
+Gitignored and untracked files do not affect evidence. New source files must be
+staged with `git add` to enter the watched scope. This is **not** proof about
+untracked files or runtime-generated outputs, and should not be selected for
+verifiers whose behavior depends on them. Without a Git repository rooted at the
+workspace, missing tracked files or unsafe tracked symlinks, the watched subject
+is invalid (fail closed). Changing `tracked_only` invalidates old cached proof.
+The option must be a TOML boolean; invalid values make that verifier unavailable.
+
 Design the expectation on the tool's real stdout (capture a run first; the
 reporter format is part of the contract, see the Node `ℹ fail 0` gotcha in
 `verification.md`).
