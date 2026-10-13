@@ -46,9 +46,15 @@ fi
 
 grep -Fq 'magic="$(od -An -tx1 -N2 "$archive"' adapters/github/action.yml ||
   fail "action no longer checks the downloaded archive format"
-grep -Fq 'tar -czf "$env:GITHUB_WORKSPACE/uni-${{ matrix.target }}.tar.gz"' \
+grep -Fq 'python scripts/release_archive.py package' \
   .github/workflows/release.yml ||
-  fail "Windows release is not packaged as a real tar gzip archive"
+  fail "release workflow no longer uses cross-platform deterministic gzip tar packaging"
+grep -Fq 'python scripts/release_archive.py verify' \
+  .github/workflows/release.yml ||
+  fail "release workflow no longer validates archive extraction and binary bytes"
+grep -Fq 'uni-${{ matrix.target }}.tar.gz.sha256' \
+  .github/workflows/release.yml ||
+  fail "release workflow no longer publishes a checksum for each archive"
 grep -Fq 'examples/artifact/digest.txt text eol=lf' .gitattributes ||
   fail "file-hash smoke fixture can change bytes on Windows checkout"
 
