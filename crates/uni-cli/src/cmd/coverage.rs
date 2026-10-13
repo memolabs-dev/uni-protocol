@@ -253,9 +253,14 @@ pub(crate) fn print_coverage(coverage: &Coverage, as_json: bool) {
     } else {
         println!("UNI acceptance coverage: {}", coverage.status);
         println!(
-            "Mapped {}/{} criteria; revision pin {}; manifest author not authenticated",
+            "Mapped {}/{} criteria; revision pin {}",
             coverage.mapped, coverage.declared, coverage.revision_pin
         );
+        println!(
+            "Scope: {}; authority: {}",
+            coverage.scope, coverage.authority
+        );
+        println!("Manifest sha256: {}", coverage.manifest_sha256);
         for finding in &coverage.findings {
             println!(
                 "  [{}] {}: {}",

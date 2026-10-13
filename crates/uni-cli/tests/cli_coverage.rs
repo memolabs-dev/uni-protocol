@@ -408,6 +408,40 @@ fn mismatched_pin_blocks_executor_before_side_effects() {
 }
 
 #[test]
+fn human_reports_disclose_declared_only_scope_and_manifest_digest() {
+    let dir = fixture();
+    manifest(&dir, "");
+    let pin = uni_evidence::sha256_hex(&std::fs::read(dir.join("owner.toml")).unwrap());
+
+    for args in [
+        vec!["coverage", "contract.uni", "--manifest", "owner.toml"],
+        vec!["verify", "contract.uni", "--acceptance", "owner.toml"],
+    ] {
+        let out = Command::new(support::bin())
+            .args(&args)
+            .env("UNI_ACCEPTANCE_SHA256", &pin)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{:?}: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("UNI acceptance coverage: COMPLETE"), "{text}");
+        assert!(text.contains("revision pin MATCHED"), "{text}");
+        assert!(text.contains("Scope: DECLARED_CRITERIA_ONLY"), "{text}");
+        assert!(
+            text.contains("authority: CALLER_SUPPLIED_NOT_AUTHENTICATED"),
+            "{text}"
+        );
+        assert!(text.contains(&format!("Manifest sha256: {pin}")), "{text}");
+    }
+}
+
+#[test]
 fn invalid_revision_pin_never_disables_hash_enforcement() {
     let dir = fixture();
     manifest(&dir, "");
