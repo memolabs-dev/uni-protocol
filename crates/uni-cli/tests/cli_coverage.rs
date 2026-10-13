@@ -350,6 +350,64 @@ fn externally_pinned_manifest_matches_and_fails_after_mutation() {
 }
 
 #[test]
+fn shortened_manifest_cannot_silently_weaken_an_owner_revision() {
+    let dir = fixture();
+    let extra = criteria_line(
+        "overdraft",
+        "overdraft",
+        "overdraft must be refused",
+        "owner.valid",
+    );
+    manifest(&dir, &extra);
+    let pin = uni_evidence::sha256_hex(&std::fs::read(dir.join("owner.toml")).unwrap());
+
+    // Removing an owner criterion yields a valid, fully mapped contract:
+    // the independent digest must still expose the weakened revision.
+    manifest(&dir, "");
+    let (ok, report) = cli_pinned(
+        &dir,
+        &["coverage", "contract.uni", "--manifest", "owner.toml"],
+        &pin,
+    );
+    assert!(!ok, "{report}");
+    assert_eq!(report["declared"], 1);
+    assert_eq!(report["mapped"], 1);
+    assert_eq!(report["revision_pin"], "MISMATCH");
+    assert_eq!(report["findings"][0]["kind"], "manifest_digest_mismatch");
+}
+
+#[cfg(not(windows))]
+#[test]
+fn mismatched_pin_blocks_executor_before_side_effects() {
+    let dir = fixture();
+    manifest(&dir, "");
+    let pin = uni_evidence::sha256_hex(&std::fs::read(dir.join("owner.toml")).unwrap());
+    let mut contents = std::fs::read_to_string(dir.join("owner.toml")).unwrap();
+    contents.push_str("\n# worker-modified\n");
+    std::fs::write(dir.join("owner.toml"), contents).unwrap();
+
+    let (ok, report) = cli_pinned(
+        &dir,
+        &[
+            "run",
+            "contract.uni",
+            "--acceptance",
+            "owner.toml",
+            "--",
+            "touch cannot-have-run.txt",
+        ],
+        &pin,
+    );
+    assert!(!ok, "{report}");
+    assert_eq!(report["coverage"]["revision_pin"], "MISMATCH");
+    assert_eq!(report["decision"], "EvidenceRequired");
+    assert!(
+        !dir.join("cannot-have-run.txt").exists(),
+        "executor must not run after a pin mismatch"
+    );
+}
+
+#[test]
 fn invalid_revision_pin_never_disables_hash_enforcement() {
     let dir = fixture();
     manifest(&dir, "");
