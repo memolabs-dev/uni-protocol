@@ -1,0 +1,12 @@
+VERSION 0.1
+DOMAIN software
+INTENT cuesheet.worker-loop
+GOAL
+  Verify code-worker effect handling without trusting the implementing agent.
+CLAIM worker-loop REQUIRED
+  ENSURE simultaneous and cancelled worker effects never forge completion receipts
+VERIFY worker-loop
+  USING owner.code-worker-loop
+ACCEPT WHEN
+  required_claims == VERIFIED
+  AND critical_failures == 0
