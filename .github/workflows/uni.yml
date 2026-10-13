@@ -32,6 +32,11 @@ jobs:
           restore-keys: ${{ matrix.os }}-cargo-
       - name: Build
         run: cargo build --release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Portable release archive regression fixtures
+        run: python -m unittest discover -s scripts/tests -p 'test_release_archive.py'
       - name: Unit tests (portable)
         run: cargo test --lib
       # CLI integration tests drive the shell verifier with POSIX commands

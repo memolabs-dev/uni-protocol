@@ -26,6 +26,8 @@ pub struct VerifierSpec {
     pub expect_not: String,
     /// globs of files whose content this evidence is bound to (content-addressed evidence)
     pub files: Vec<String>,
+    /// Opt-in: bind only Git-indexed regular files; ignored/untracked files are excluded.
+    pub tracked_only: bool,
     /// file-hash only: expected sha256 per workspace-relative path.
     pub expect_sha256: std::collections::BTreeMap<String, String>,
     pub timeout: u64,
@@ -44,6 +46,7 @@ impl VerifierSpec {
             expect: String::new(),
             expect_not: String::new(),
             files: vec![],
+            tracked_only: false,
             expect_sha256: Default::default(),
             timeout: DEFAULT_TIMEOUT_SECS,
             max_age_hours: 0,
@@ -96,6 +99,12 @@ pub fn load_registry(dot_uni: &std::path::Path) -> std::collections::HashMap<Str
                             .collect()
                     })
                     .unwrap_or_default();
+                // Never silently turn a mistyped scope restriction into an all-files scan.
+                let tracked_only = match tbl.get("tracked_only") {
+                    None => false,
+                    Some(toml::Value::Boolean(value)) => *value,
+                    _ => continue,
+                };
                 let mut expect_sha256 = std::collections::BTreeMap::new();
                 match tbl.get("expect_sha256") {
                     Some(toml::Value::String(h)) => {
@@ -132,6 +141,7 @@ pub fn load_registry(dot_uni: &std::path::Path) -> std::collections::HashMap<Str
                             expect,
                             expect_not,
                             files,
+                            tracked_only,
                             expect_sha256,
                             timeout,
                             max_age_hours,
@@ -203,6 +213,9 @@ fn observed_subject(
         return None;
     }
     let root = std::fs::canonicalize(workspace).ok()?;
+    if spec.tracked_only {
+        return observed_git_tracked_subject(&root, &patterns);
+    }
     let mut stack = vec![root.clone()];
     let mut found = std::collections::BTreeMap::new();
     // Neither runtime output nor build caches constitute a declared subject.
@@ -239,6 +252,73 @@ fn observed_subject(
                 found.insert(rel, sha256_hex(&std::fs::read(&path).ok()?));
             }
         }
+    }
+    (!found.is_empty()).then_some(found)
+}
+
+/// Git-indexed files are an explicit, narrower assurance scope. No filesystem
+/// traversal is performed for this mode: ignored caches, backups, and untracked
+/// files cannot influence a proof. Worktree bytes (not index blob bytes) are
+/// hashed, so edits to tracked files still invalidate cached evidence.
+fn observed_git_tracked_subject(
+    root: &std::path::Path,
+    patterns: &[String],
+) -> Option<std::collections::BTreeMap<String, String>> {
+    use std::process::Command;
+
+    let top = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !top.status.success()
+        || std::fs::canonicalize(String::from_utf8(top.stdout).ok()?.trim()).ok()? != root
+    {
+        // Git must belong to exactly this workspace, not an unexpected parent.
+        return None;
+    }
+    let listed = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "--cached", "-z"])
+        .output()
+        .ok()?;
+    if !listed.status.success() {
+        return None;
+    }
+    let mut found = std::collections::BTreeMap::new();
+    for raw in listed
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|raw| !raw.is_empty())
+    {
+        let rel = std::str::from_utf8(raw).ok()?;
+        if !patterns
+            .iter()
+            .any(|pattern| path_matches_glob(rel, pattern))
+        {
+            continue;
+        }
+        let mut file = root.to_path_buf();
+        for component in rel.split('/') {
+            if component.is_empty() || component == "." || component == ".." {
+                return None;
+            }
+            file.push(component);
+            // Never follow a symlink in any indexed path component.
+            if std::fs::symlink_metadata(&file)
+                .ok()?
+                .file_type()
+                .is_symlink()
+            {
+                return None;
+            }
+        }
+        if !std::fs::metadata(&file).ok()?.is_file() {
+            return None;
+        }
+        found.insert(rel.to_string(), sha256_hex(&std::fs::read(file).ok()?));
     }
     (!found.is_empty()).then_some(found)
 }
@@ -420,6 +500,7 @@ pub fn spec_fingerprint(verifier_ref: &str, spec: &VerifierSpec, actor_id: &str)
         "expect": spec.expect,
         "expect_not": spec.expect_not,
         "files": spec.files,
+        "tracked_only": spec.tracked_only,
         "expect_sha256": spec.expect_sha256,
         "timeout": spec.timeout,
         "max_age_hours": spec.max_age_hours,
@@ -870,6 +951,12 @@ mod tests {
             spec_fingerprint("registry.check", &deadline, "alice")
         );
 
+        let mut tracked = base.clone();
+        tracked.tracked_only = true;
+        assert_ne!(
+            original,
+            spec_fingerprint("registry.check", &tracked, "alice")
+        );
         assert_eq!(original.len(), 32, "a cache key needs at least 128 bits");
     }
 
@@ -911,6 +998,149 @@ mod tests {
         assert_eq!(
             checksums[0], checksums[1],
             "identical subjects must hash identically across creation order"
+        );
+    }
+
+    #[test]
+    fn tracked_only_watches_exact_git_index_not_ignored_caches() {
+        use std::process::Command;
+        let d = tmp("git-index-subject");
+        let git = |args: &[&str]| {
+            let result = Command::new("git")
+                .args(args)
+                .current_dir(&d)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        std::fs::create_dir_all(d.join("src/__pycache__")).unwrap();
+        std::fs::write(d.join(".gitignore"), "*.bak\n__pycache__/\n").unwrap();
+        std::fs::write(d.join("src/app.py"), "original").unwrap();
+        std::fs::write(d.join("src/app.py.bak"), "backup").unwrap();
+        std::fs::write(d.join("src/__pycache__/app.pyc"), "cache").unwrap();
+        git(&["add", ".gitignore", "src/app.py"]);
+        let mut s = spec("true");
+        s.files = vec!["src/**".into()];
+        assert_eq!(
+            artifact_hashes(&s, &d).len(),
+            3,
+            "default watches all matching regular files"
+        );
+        s.tracked_only = true;
+        let watched = artifact_hashes(&s, &d);
+        assert_eq!(
+            watched.keys().cloned().collect::<Vec<_>>(),
+            vec!["src/app.py"]
+        );
+        let original = artifact_hash(&s, &d).unwrap();
+        std::fs::write(d.join("src/app.py.bak"), "updated backup").unwrap();
+        std::fs::write(d.join("src/__pycache__/app.pyc"), "updated cache").unwrap();
+        assert_eq!(artifact_hash(&s, &d).unwrap(), original);
+        std::fs::write(d.join("src/app.py"), "modified working file").unwrap();
+        let updated = artifact_hash(&s, &d).unwrap();
+        assert_ne!(original, updated);
+        std::fs::write(d.join("src/new.py"), "untracked").unwrap();
+        assert_eq!(
+            artifact_hash(&s, &d).unwrap(),
+            updated,
+            "untracked files require git add"
+        );
+        git(&["add", "src/new.py"]);
+        assert_ne!(artifact_hash(&s, &d).unwrap(), updated);
+    }
+
+    #[test]
+    fn tracked_only_refuses_non_git_workspace_and_missing_indexed_files() {
+        use std::process::Command;
+        let d = tmp("tracked-no-repo");
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/app.py"), "yes").unwrap();
+        let mut s = spec("true");
+        s.files = vec!["src/**".into()];
+        s.tracked_only = true;
+        assert!(
+            artifact_hash(&s, &d).is_none(),
+            "not git-tracked, not evidence"
+        );
+        let status = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&d)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let status = Command::new("git")
+            .args(["add", "src/app.py"])
+            .current_dir(&d)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(artifact_hash(&s, &d).is_some());
+        std::fs::remove_file(d.join("src/app.py")).unwrap();
+        assert!(
+            artifact_hash(&s, &d).is_none(),
+            "missing tracked subject must fail closed"
+        );
+    }
+
+    #[test]
+    fn registry_requires_boolean_tracked_scope_and_loads_true_value() {
+        let d = tmp("registry-tracked-mode");
+        std::fs::write(
+            d.join(".uni/config.toml"),
+            r#"
+[verifiers.watch]
+run = "true"
+files = ["src/**"]
+tracked_only = "true"
+"#,
+        )
+        .unwrap();
+        assert!(!load_registry(&d.join(".uni")).contains_key("watch"));
+        std::fs::write(
+            d.join(".uni/config.toml"),
+            r#"
+[verifiers.watch]
+run = "true"
+files = ["src/**"]
+tracked_only = true
+"#,
+        )
+        .unwrap();
+        assert!(load_registry(&d.join(".uni"))["watch"].tracked_only);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tracked_only_rejects_indexed_symlink_even_inside_workspace() {
+        use std::os::unix::fs::symlink;
+        use std::process::Command;
+        let d = tmp("tracked-symlink");
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/actual.py"), "contents").unwrap();
+        symlink("actual.py", d.join("src/alias.py")).unwrap();
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&d)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["add", "src/actual.py", "src/alias.py"])
+            .current_dir(&d)
+            .status()
+            .unwrap()
+            .success());
+        let mut s = spec("true");
+        s.files = vec!["src/**".into()];
+        s.tracked_only = true;
+        assert!(
+            artifact_hash(&s, &d).is_none(),
+            "indexed symlinks must fail closed"
         );
     }
 
