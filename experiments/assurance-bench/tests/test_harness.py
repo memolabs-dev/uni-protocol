@@ -1,5 +1,8 @@
+import argparse
 import importlib.util
 import json
+import shutil
+from unittest import mock
 from pathlib import Path
 import subprocess
 import sys
@@ -70,6 +73,44 @@ class IndependentOracleTests(unittest.TestCase):
         ], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertIn("actual output", result.stderr)
+
+    def test_oracle_source_drift_invalidates_a_result(self):
+        # Mock the evaluator rather than execute arbitrary candidate code on a
+        # developer host. Detect changes to the exact sources being graded.
+        for mutated in ("baseline", "candidate", "owner-oracle"):
+            with self.subTest(mutated=mutated), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                copies = {}
+                for name, source in (
+                    ("baseline", "baseline"),
+                    ("candidate", "correct"),
+                    ("owner-oracle", "owner-oracle"),
+                ):
+                    copies[name] = Path(shutil.copytree(FIX / source, root / name)).resolve()
+                args = argparse.Namespace(
+                    case_id="ledger-mutated",
+                    run_id="first",
+                    kind="scripted",
+                    baseline=copies["baseline"],
+                    candidate=copies["candidate"],
+                    oracle=copies["owner-oracle"],
+                    timeout=5,
+                    uni_json=None,
+                    agent_output=None,
+                    ci_decision="UNOBSERVED",
+                )
+                def fake_oracle(oracle, subject, timeout):
+                    if (mutated == "baseline" and subject == copies["baseline"]) or (
+                        mutated != "baseline" and subject == copies["candidate"]
+                    ):
+                        target = copies[mutated] / (
+                            "test_ledger.py" if mutated == "owner-oracle" else "ledger.py"
+                        )
+                        target.write_bytes(target.read_bytes() + b"\\n# drift\\n")
+                    return {"passed": subject == copies["candidate"], "output_sha256": "0" * 64}
+                with mock.patch.object(bench, "oracle_run", side_effect=fake_oracle):
+                    with self.assertRaisesRegex(bench.InvalidCase, "changed during"):
+                        bench.evaluate(args)
 
     def test_summarize_does_not_invent_unobserved_results(self):
         wrong = json.loads(self._run("plausible-wrong").stdout)
