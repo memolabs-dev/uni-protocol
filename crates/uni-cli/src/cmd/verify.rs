@@ -442,13 +442,33 @@ pub(crate) fn cmd_verify(
                     resolved_spec.clone(),
                 ));
             }
-            uni_evidence::CacheOutcome::Miss => need_run.push((
-                v.claim_id.clone(),
-                v.verifier_ref.clone(),
-                v.inline_shell.clone(),
-                binding_hash.clone(),
-                resolved_spec.clone(),
-            )),
+            uni_evidence::CacheOutcome::Miss => {
+                // A changed trusted verifier now has a different cache key.
+                // Preserve the causal audit trail even though the old evidence
+                // lives under a different filename and cannot be loaded.
+                if trust_boundary_changed && tb_diff.changed.contains(&v.verifier_ref) {
+                    let reason = uni_evidence::StaleReason::VerifierConfigChanged {
+                        from: prev_registry_hash.clone(),
+                        to: registry_hash.clone(),
+                    };
+                    journal.push(events::Event {
+                        name: "EvidenceStale",
+                        attrs: vec![
+                            ("uni.claim.id".into(), v.claim_id.clone()),
+                            ("uni.intent.id".into(), ir.intent.id.clone()),
+                            ("uni.stale.reasons".into(), reason.label().into()),
+                            ("uni.stale.detail".into(), reason.describe()),
+                        ],
+                    });
+                }
+                need_run.push((
+                    v.claim_id.clone(),
+                    v.verifier_ref.clone(),
+                    v.inline_shell.clone(),
+                    binding_hash.clone(),
+                    resolved_spec.clone(),
+                ));
+            }
         }
     }
     // Policy source selection: OPA bundle when both rego + opa binary exist, else TOML stack.
