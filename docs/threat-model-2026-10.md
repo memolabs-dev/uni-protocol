@@ -37,6 +37,32 @@ This closes **one** cache-isolation defect, not the full audit in issue #4.
 The old on-disk evidence files are not migrated: new fingerprints cause safe
 cache misses followed by fresh verification.
 
+## October 13 follow-up — watched-subject collision and nested exclusions
+
+Two focused red/green regressions exposed coverage weaknesses in the default
+filesystem watcher (PR under #4):
+
+- `files = ["src/**"]` used to **skip any nested directory** named
+  `target`, `evidence`, `.uni`, or `.git`. These names were intended only
+  for workspace-root runtime directories. The corrected scanner skips them at
+  the workspace root, but observes same-named directories under source trees;
+  changing those nested source files now alters the watched-subject digest.
+- The original watcher converted filesystem-relative paths with
+  `to_string_lossy`, allowing different non-UTF-8 byte names on Linux to
+  collide in the evidence map. The corrected scanner refuses paths that cannot
+  be represented losslessly (unobservable subject, not valid evidence).
+  APFS generally refuses those filenames; the on-disk regression is gated to
+  Unix except macOS, while lexical collision detection runs on both.
+
+**Limits:** This covers enumeration and map-key identity, not an atomic
+filesystem snapshot. Concurrent rename/symlink changes, filesystem case
+folding, alternate Git index/worktree overrides, and cache replay across
+execution-environment modifications remain separate audit items.
+The root runtime exclusions themselves remain intentional and should not be
+mistaken for generic source coverage. The default and Git-indexed watcher
+modes each have explicit boundaries; an owner contract must specify which
+subject is authoritative.
+
 ## Follow-up criteria for #4
 
 - Red/green regression for each confirmed boundary defect.

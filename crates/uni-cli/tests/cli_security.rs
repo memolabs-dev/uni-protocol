@@ -142,6 +142,46 @@ ACCEPT WHEN
     );
 }
 
+/// M2 regression: a nested source directory named like UNI runtime output
+/// must not fall outside declared src/** evidence coverage. Without this
+/// boundary, a cached Accepted result could outlive a changed source input.
+#[cfg(unix)]
+#[test]
+fn nested_source_directory_drift_invalidates_real_cli_cached_evidence() {
+    let dir = mk_repo("nested-subject-bypass");
+    std::fs::create_dir_all(dir.join("src/evidence")).unwrap();
+    std::fs::write(dir.join("src/normal.txt"), "SAFE").unwrap();
+    std::fs::write(dir.join("src/evidence/rules.txt"), "SAFE").unwrap();
+    std::fs::write(
+        dir.join(".uni/config.toml"),
+        "[verifiers.clean]\nrun = \"! grep -R EVIL src\"\nfiles = [\"src/**\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("c.uni"),
+        "VERSION 0.1\nDOMAIN software\nINTENT nested-coverage\nGOAL\n  No forbidden input.\nCLAIM safe REQUIRED\n  ENSURE no forbidden input\nVERIFY safe\n  USING clean\n",
+    ).unwrap();
+    // No Git repository: commit/dirtiness stay constant across both runs.
+    // Invalidation MUST therefore come from the declared watched snapshot.
+    let before = out(&["verify", "c.uni"], &dir);
+    assert!(
+        before.contains("Accepted"),
+        "baseline must be valid: {before}"
+    );
+    std::fs::write(dir.join("src/evidence/rules.txt"), "EVIL").unwrap();
+    let after = out(&["verify", "c.uni"], &dir);
+    assert!(
+        !after.contains("Decision: Accepted"),
+        "cached success must be invalidated after nested watched-source drift: {after}"
+    );
+    assert!(
+        after.contains("EvidenceRequired")
+            || after.contains("FAIL")
+            || after.contains("no valid evidence"),
+        "changed source must trigger new verifier observation: {after}"
+    );
+}
+
 /// v0.2b-2: registry security — inline shell outside trusted registry is refused.
 #[test]
 fn inline_shell_outside_registry_refused() {
