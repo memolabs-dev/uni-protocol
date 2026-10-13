@@ -9,9 +9,14 @@ visible positive behavior but fails an owner invariant.
 
 The implementer receives a **candidate-only** working directory. The owner
 holds acceptance tests in a disjoint directory and runs them after delivery.
-The harness refuses overlapping baseline, candidate and oracle paths and
-rejects a base task that already passes owner tests. It never invents a worker
-self-report: that comes only from the actual last line of the supplied worker
+The harness refuses overlapping baseline, candidate and oracle paths,
+rejects a base task that already passes owner tests, and rehashes all three
+source trees around oracle execution. If baseline, candidate or owner oracle
+changes while a test runs, the evaluation is **invalid**, not a scored result.
+The check compares before/after file-tree SHA-256 hashes; it cannot promise an
+atomic filesystem snapshot or detect a file changed and restored between reads.
+It never invents a worker self-report: that comes only from the actual last
+line of the supplied worker
 output. It never invents a UNI verdict: absent `uni --json verify` output is
 `UNOBSERVED`, not `REJECTED`.
 
