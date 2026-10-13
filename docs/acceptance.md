@@ -54,6 +54,12 @@ repository must make the acceptance-aware invocation a required CI check: an
 agent can otherwise omit the optional flag. Treat edits to the criteria and
 trusted verifier registry as sensitive changes requiring human review.
 
+The human-readable `uni coverage` and `uni verify --acceptance` reports
+show the declared-only scope, unauthenticated caller authority, actual manifest
+SHA-256 and revision-pin status alongside the decision. When copying results
+into a PR summary, include this scope disclosure; a plain `Accepted` line
+without the declared-scope qualifier would overstate what UNI proved.
+
 The word COMPLETE means all **declared** criteria have matching contract
 mappings. It is not an assurance of all unstated requirements or independent
 proof of correctness. See issue #13 and the reproducible synthetic ledger

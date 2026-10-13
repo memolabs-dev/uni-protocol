@@ -649,6 +649,9 @@ pub(crate) fn cmd_verify(
         }
         println!("\nDecision: {:?}", decision.decision);
         println!("Reason: {}", decision.reason);
+        if let Some(coverage) = &owner_coverage {
+            crate::cmd::coverage::print_coverage(coverage, false);
+        }
         if identity_verified {
             println!("Identity: {} (verified)", actor.id);
         }
