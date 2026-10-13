@@ -408,14 +408,24 @@ pub fn with_selector(spec: &VerifierSpec, selector: Option<&str>) -> Result<Veri
 }
 
 pub fn spec_fingerprint(verifier_ref: &str, spec: &VerifierSpec, actor_id: &str) -> String {
-    let seed = format!(
-        "{verifier_ref}|{}|{}|{}|{}|actor:{actor_id}",
-        spec.run,
-        spec.expect,
-        spec.expect_not,
-        spec.files.join(",")
-    );
-    sha256_hex(seed.as_bytes())[..12].to_string()
+    // Bind every verifier policy dimension to the cache key. Delimited text
+    // can be ambiguous and the former 48-bit prefix omitted kind, expected
+    // file digests and expiry, so unrelated verifier specs could share a key.
+    // BTreeMap gives deterministic ordering for per-file expectations.
+    let seed = serde_json::json!({
+        "verifier_ref": verifier_ref,
+        "actor": actor_id,
+        "kind": spec.kind,
+        "run": spec.run,
+        "expect": spec.expect,
+        "expect_not": spec.expect_not,
+        "files": spec.files,
+        "expect_sha256": spec.expect_sha256,
+        "timeout": spec.timeout,
+        "max_age_hours": spec.max_age_hours,
+    });
+    let encoded = serde_json::to_vec(&seed).expect("verifier spec is JSON serializable");
+    sha256_hex(&encoded)[..32].to_string()
 }
 
 pub fn run_spec(
@@ -829,6 +839,38 @@ mod tests {
             spec_fingerprint("k", &a, "alice"),
             spec_fingerprint("k", &a, "bob")
         );
+    }
+
+    #[test]
+    fn fingerprint_includes_all_verifier_policy_dimensions() {
+        let base = spec("echo good");
+        let original = spec_fingerprint("registry.check", &base, "alice");
+
+        let mut kind = base.clone();
+        kind.kind = "file-hash".into();
+        assert_ne!(original, spec_fingerprint("registry.check", &kind, "alice"));
+
+        let mut expectation = base.clone();
+        expectation
+            .expect_sha256
+            .insert("artifact.txt".into(), "a".repeat(64));
+        assert_ne!(
+            original,
+            spec_fingerprint("registry.check", &expectation, "alice")
+        );
+
+        let mut ttl = base.clone();
+        ttl.max_age_hours = 1;
+        assert_ne!(original, spec_fingerprint("registry.check", &ttl, "alice"));
+
+        let mut deadline = base.clone();
+        deadline.timeout += 1;
+        assert_ne!(
+            original,
+            spec_fingerprint("registry.check", &deadline, "alice")
+        );
+
+        assert_eq!(original.len(), 32, "a cache key needs at least 128 bits");
     }
 
     #[test]
