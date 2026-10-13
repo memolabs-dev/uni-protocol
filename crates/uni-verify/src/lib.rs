@@ -218,18 +218,19 @@ fn observed_subject(
     }
     let mut stack = vec![root.clone()];
     let mut found = std::collections::BTreeMap::new();
-    // Neither runtime output nor build caches constitute a declared subject.
-    let skip = ["target", ".git", ".uni", "evidence"];
+    // Only UNI's WORKSPACE-ROOT runtime directories are excluded. A nested
+    // src/target/ or src/evidence/ is legitimate source under src/**, and
+    // skipping it would let code drift evade content-bound cache invalidation.
+    let skip_root = ["target", ".git", ".uni", "evidence"];
     while let Some(dir) = stack.pop() {
         let entries = std::fs::read_dir(&dir).ok()?;
         for entry in entries {
             let entry = entry.ok()?;
             let path = entry.path();
-            let rel = path
-                .strip_prefix(&root)
-                .ok()?
-                .to_string_lossy()
-                .replace('\\', "/");
+            // Lossy conversion can merge distinct filesystem names into one
+            // evidence-map key (U+FFFD), silently leaving an input unbound.
+            // Treat paths we cannot encode losslessly as unobservable.
+            let rel = path.strip_prefix(&root).ok()?.to_str()?.replace('\\', "/");
             let ty = entry.file_type().ok()?;
             if ty.is_symlink() {
                 // A linked directory could introduce entire unobserved subtrees
@@ -242,7 +243,7 @@ fn observed_subject(
             }
             if ty.is_dir() {
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if !skip.contains(&name) {
+                if dir != root || !skip_root.contains(&name) {
                     stack.push(path);
                 }
             } else if patterns.iter().any(|pat| path_matches_glob(&rel, pat)) {
@@ -1141,6 +1142,79 @@ tracked_only = true
         assert!(
             artifact_hash(&s, &d).is_none(),
             "indexed symlinks must fail closed"
+        );
+    }
+
+    #[test]
+    fn recursive_watcher_includes_nested_directories_named_like_runtime_outputs() {
+        let d = tmp("nested-exclusions");
+        for folder in ["target", "evidence", ".uni"] {
+            let inside = d.join("src").join(folder);
+            std::fs::create_dir_all(&inside).unwrap();
+            std::fs::write(inside.join("important.py"), folder).unwrap();
+        }
+        std::fs::write(d.join("src/normal.py"), "source").unwrap();
+        // Actual runtime output directories at the root are not watched by default.
+        for root_output in ["target", "evidence"] {
+            std::fs::create_dir_all(d.join(root_output)).unwrap();
+            std::fs::write(d.join(root_output).join("output.py"), "cache").unwrap();
+        }
+        let mut s = spec("true");
+        s.files = vec!["src/**".into()];
+        let watched = artifact_hashes(&s, &d);
+        for folder in ["target", "evidence", ".uni"] {
+            assert!(
+                watched.contains_key(&format!("src/{folder}/important.py")),
+                "source file hidden by a runtime exclusion: {watched:?}"
+            );
+        }
+        assert!(!watched.contains_key("target/output.py"));
+        assert!(!watched.contains_key("evidence/output.py"));
+        let baseline = artifact_hash(&s, &d).unwrap();
+        std::fs::write(d.join("src/target/important.py"), "changed").unwrap();
+        assert_ne!(
+            artifact_hash(&s, &d).unwrap(),
+            baseline,
+            "nested source modifications must invalidate evidence"
+        );
+    }
+
+    // macOS APFS rejects non-UTF-8 filenames before they can reach UNI.
+    // Linux ext4 allows them, so the filesystem regression runs there.
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_relative_names_cannot_be_losslessly_encoded_as_manifest_keys() {
+        use std::os::unix::ffi::OsStringExt;
+        let first = std::ffi::OsString::from_vec(vec![b'a', 0xfe, b'.', b'p', b'y']);
+        let second = std::ffi::OsString::from_vec(vec![b'a', 0xff, b'.', b'p', b'y']);
+        assert_eq!(
+            first.to_string_lossy(),
+            second.to_string_lossy(),
+            "lossy path hashing would merge distinct file identities"
+        );
+        assert!(first.to_str().is_none());
+        assert!(second.to_str().is_none());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn recursive_watcher_refuses_non_utf8_filenames_instead_of_hash_key_collisions() {
+        use std::os::unix::ffi::OsStringExt;
+        let d = tmp("nonutf8-name");
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        let mut s = spec("true");
+        s.files = vec!["src/**".into()];
+        std::fs::write(d.join("src/normal.py"), "ok").unwrap();
+        assert!(artifact_hash(&s, &d).is_some());
+        // Both names become a common U+FFFD replacement under lossy conversion.
+        // If the BTreeMap collapses them to one key, one file is left unobserved.
+        for invalid in [0xfe_u8, 0xff_u8] {
+            let name = std::ffi::OsString::from_vec(vec![b'a', invalid, b'.', b'p', b'y']);
+            std::fs::write(d.join("src").join(name), "untrusted").unwrap();
+        }
+        assert!(
+            artifact_hash(&s, &d).is_none(),
+            "ambiguous non-UTF-8 paths must fail closed, never produce a partial digest"
         );
     }
 
