@@ -123,9 +123,21 @@ def evaluate(args: argparse.Namespace) -> dict:
     candidate_sha = candidate_digest(candidate)
     oracle_sha = candidate_digest(oracle)
     base = oracle_run(oracle, baseline, args.timeout)
+    if candidate_digest(baseline) != baseline_digest:
+        raise InvalidCase("baseline changed during owner-oracle execution")
+    if candidate_digest(oracle) != oracle_sha:
+        raise InvalidCase("owner oracle changed during baseline evaluation")
     if base["passed"]:
         raise InvalidCase("invalid baseline: owner oracle already passes on the starting task")
     delivery = oracle_run(oracle, candidate, args.timeout)
+    # An oracle verdict is only meaningful for the exact source bytes named
+    # in the recorded result. A fixture, worker or test may mutate them.
+    if candidate_digest(candidate) != candidate_sha:
+        raise InvalidCase("candidate changed during owner-oracle execution")
+    if candidate_digest(oracle) != oracle_sha:
+        raise InvalidCase("owner oracle changed during candidate evaluation")
+    if candidate_digest(baseline) != baseline_digest:
+        raise InvalidCase("baseline changed during candidate evaluation")
     uni, uni_sha = parse_uni_report(args.uni_json)
     agent, agent_sha = parse_agent_report(args.agent_output)
     return {
