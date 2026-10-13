@@ -412,7 +412,7 @@ pub fn spec_fingerprint(verifier_ref: &str, spec: &VerifierSpec, actor_id: &str)
     // can be ambiguous and the former 48-bit prefix omitted kind, expected
     // file digests and expiry, so unrelated verifier specs could share a key.
     // BTreeMap gives deterministic ordering for per-file expectations.
-    let seed = serde_json::json!({
+    let mut seed = serde_json::json!({
         "verifier_ref": verifier_ref,
         "actor": actor_id,
         "kind": spec.kind,
@@ -424,6 +424,12 @@ pub fn spec_fingerprint(verifier_ref: &str, spec: &VerifierSpec, actor_id: &str)
         "timeout": spec.timeout,
         "max_age_hours": spec.max_age_hours,
     });
+    // File-hash used to accept expected paths excluded from the watched
+    // snapshot. Version its cache identity so legacy partially bound proofs
+    // are never reused after the fail-closed fix below.
+    if spec.kind == "file-hash" {
+        seed["observation_version"] = serde_json::json!(2);
+    }
     let encoded = serde_json::to_vec(&seed).expect("verifier spec is JSON serializable");
     sha256_hex(&encoded)[..32].to_string()
 }
@@ -475,6 +481,22 @@ pub fn run_spec(
     // binding" would let a later appearance of the files count as a cache hit.
     if !spec.files.is_empty() && ev.artifact_hash.is_empty() {
         ev.state = EvidenceState::Invalid;
+    }
+    // The file-hash verifier reads every declared expectation, but the
+    // subject snapshot intentionally excludes runtime/build/cache directories.
+    // A successful file read alone is not proof of complete, reusable scope.
+    // Fail closed if even ONE expected path was omitted from the snapshot,
+    // including when a second expected path was safely observed.
+    if spec.kind == "file-hash"
+        && spec
+            .expect_sha256
+            .keys()
+            .any(|path| !ev.artifact_files.contains_key(path))
+    {
+        ev.state = EvidenceState::Invalid;
+        ev.output_excerpt.push_str(
+            "\n[uni] expected hash path is outside the observable subject; proof refused",
+        );
     }
     ev.fingerprint = spec_fingerprint(verifier_ref, spec, &actor.id);
     ev.actor = actor.clone();
@@ -1144,6 +1166,50 @@ mod tests {
         .unwrap();
         assert_eq!(ev3.state, EvidenceState::Invalid);
         assert!(ev3.output_excerpt.contains("MISSING"));
+    }
+
+    #[test]
+    fn file_hash_refuses_expected_paths_missing_from_watched_snapshot() {
+        let d = tmp("file-hash-hidden-scope");
+        std::fs::create_dir_all(d.join("target")).unwrap();
+        std::fs::write(d.join("target/result.txt"), "verified").unwrap();
+        std::fs::write(d.join("owned.txt"), "owned").unwrap();
+
+        // Explicit SHA-256 checks can pass on skipped build/cache directories,
+        // but those bytes cannot be bound to evidence or its reuse.
+        let mut only_skipped = file_hash_spec("target/result.txt", &sha256_hex(b"verified"));
+        only_skipped.files.clear();
+        let ev = run_spec(
+            "skipped",
+            "owner.file",
+            &only_skipped,
+            &d,
+            30,
+            &uni_evidence::Actor::local(),
+            &uni_evidence::Actor::local(),
+        )
+        .unwrap();
+        assert_eq!(ev.state, EvidenceState::Invalid);
+        assert!(ev.artifact_files.is_empty());
+
+        // A second, observable expected path must not hide partial coverage.
+        let mut partially_watched = only_skipped.clone();
+        partially_watched
+            .expect_sha256
+            .insert("owned.txt".to_string(), sha256_hex(b"owned"));
+        let ev = run_spec(
+            "partial",
+            "owner.file",
+            &partially_watched,
+            &d,
+            30,
+            &uni_evidence::Actor::local(),
+            &uni_evidence::Actor::local(),
+        )
+        .unwrap();
+        assert_eq!(ev.state, EvidenceState::Invalid);
+        assert!(ev.artifact_files.contains_key("owned.txt"));
+        assert!(!ev.artifact_files.contains_key("target/result.txt"));
     }
 
     #[test]

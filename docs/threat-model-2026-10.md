@@ -37,6 +37,17 @@ This closes **one** cache-isolation defect, not the full audit in issue #4.
 The old on-disk evidence files are not migrated: new fingerprints cause safe
 cache misses followed by fresh verification.
 
+## File-hash expected-path observation (2026-10-13)
+
+Regression: file-hash could return Valid for a correct SHA-256 file inside
+an intentionally excluded target/ directory when files was omitted.
+With a second expected file in normal scope, its cached snapshot could
+also contain only that safe file while omitting the skipped expectation.
+The repaired verifier refuses both incomplete observations; its file-hash
+cache key is versioned to prevent reuse of old partially bound evidence.
+This is a narrowly demonstrated coverage defect, not a proof of atomic
+filesystem observation. Build/cache directories remain excluded by policy.
+
 ## Follow-up criteria for #4
 
 - Red/green regression for each confirmed boundary defect.
