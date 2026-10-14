@@ -1,4 +1,6 @@
-# For in-repository pull requests from the two currently trusted maintainers.
+# For in-repository pull requests from the two currently trusted identities: the
+# owner and the memo-labs-automation GitHub App. The legacy machine user
+# drop-agent-bot was retired on 2026-10-14 (blocked by the org's secure 2FA requirement).
 # This workflow deliberately never checks out PR code and never runs PR-supplied
 # commands or expressions. The required CI check decides whether GitHub merges.
 name: Enable auto-merge
@@ -17,8 +19,8 @@ jobs:
     if: >-
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      (github.event.pull_request.user.login == 'drop-agent-bot' ||
-       github.event.pull_request.user.login == 'guillaume-flambard') &&
+      (github.event.pull_request.user.login == 'guillaume-flambard' ||
+       github.event.pull_request.user.login == 'memo-labs-automation[bot]') &&
       !contains(github.event.pull_request.labels.*.name, 'hold-merge')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -34,8 +36,8 @@ jobs:
     name: Pause existing auto-merge on request
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      (github.event.pull_request.user.login == 'drop-agent-bot' ||
-       github.event.pull_request.user.login == 'guillaume-flambard') &&
+      (github.event.pull_request.user.login == 'guillaume-flambard' ||
+       github.event.pull_request.user.login == 'memo-labs-automation[bot]') &&
       (github.event.pull_request.draft ||
        contains(github.event.pull_request.labels.*.name, 'hold-merge'))
     runs-on: ubuntu-latest

@@ -11,7 +11,7 @@ UNI does not plan tasks, orchestrate agents, host accounts, replace CI, enforce 
 ## Operational policy
 
 - Repository: https://github.com/memolabs-dev/uni-protocol
-- Automation identity: drop-agent-bot with write access; owner's account also allowed.
+- Automation identity: the memo-labs-automation GitHub App (`memo-labs-automation[bot]`); owner's account also allowed. Its installation must include this repository before it can open PRs here. The legacy user account drop-agent-bot was retired on 2026-10-14 (blocked by the organization's secure 2FA requirement).
 - Pull requests and required CI before merge; native auto-merge only for trusted in-repository authors after green required checks.
 - An explicit hold-merge label or draft state stops automated merge. A PR from a fork is never auto-merged.
 - Never check out or execute PR code in a privileged pull_request_target workflow.
