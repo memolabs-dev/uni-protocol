@@ -26,10 +26,10 @@ UNI does not plan tasks, orchestrate agents, host accounts, replace CI, enforce 
 
 - [x] Transfer repository to memolabs-dev.
 - [x] Grant drop-agent-bot write permissions.
-- [ ] Update public and release-action references after transfer.
-- [ ] Install a single stable required CI status aggregating the full matrix, examples, action smoke and lint.
-- [ ] Protect main: PR required, CI required, admins cannot bypass, no force push/delete.
-- [ ] Enable native auto-merge after required checks, without any bypass.
+- [x] Update public and release-action references after transfer. (Checked 2026-10-17: README badges, clone commands, `Cargo.toml`, the issue template and `identity-live.yml` all point at memolabs-dev; only the dated 2026-09-14 report and a recorded identity sample keep the old owner, as history.)
+- [x] Install a single stable required CI status aggregating the full matrix, examples, action smoke and lint. (`UNI required checks`, the only required status on `main`.)
+- [x] Protect main: PR required, CI required, admins cannot bypass, no force push/delete. (Checked 2026-10-17: ruleset "main: PR only" with no bypass actor, `enforce_admins` on, force push and deletion off.)
+- [x] Automated merge after required checks, without any bypass. (Native auto-merge first; Mergify since 2026-10-17, #34.)
 - [ ] Record a verifiable baseline on Mac plus GitHub-hosted runners.
 
 Done when: an intentionally failing PR cannot merge, a green trusted PR can auto-merge, and the published action still downloads the correct release.
