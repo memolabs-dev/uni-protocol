@@ -12,7 +12,8 @@ UNI does not plan tasks, orchestrate agents, host accounts, replace CI, enforce 
 
 - Repository: https://github.com/memolabs-dev/uni-protocol
 - Automation identity: the memo-labs-automation GitHub App (`memo-labs-automation[bot]`); owner's account also allowed. Its installation must include this repository before it can open PRs here. The legacy user account drop-agent-bot was retired on 2026-10-14 (blocked by the organization's secure 2FA requirement).
-- Pull requests and required CI before merge; native auto-merge only for trusted in-repository authors after green required checks.
+- Pull requests and required CI before merge. Mergify (`.mergify.yml`) merges PRs from trusted in-repository authors once `UNI required checks` is green; it replaced the native auto-merge workflow on 2026-10-17.
+- Sensitive paths are never merged automatically: CI and repository settings, the constitution, `crates/uni-verify/` and `crates/uni-cli/src/cmd/authorize.rs`. They wait for the owner.
 - An explicit hold-merge label or draft state stops automated merge. A PR from a fork is never auto-merged.
 - Never check out or execute PR code in a privileged pull_request_target workflow.
 - Changes touching trusted verifiers, identity roots or authorization policy warrant focused human attention before relying on them: tests alone cannot decide trust.
