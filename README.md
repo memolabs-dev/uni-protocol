@@ -13,6 +13,14 @@ INTENT → CLAIMS → EVIDENCE → POLICY → DECISION
 
 Rust workspace, single CLI binary `uni`. Deterministic. Filesystem-only. No cloud required.
 
+### Watch a verified CLI walkthrough
+
+[![UNI v0.9.4: actual assurance report, reproduced in a clean checkout](docs/assets/uni-demo-20261024.png)](https://github.com/memolabs-dev/uni-protocol/releases/download/v0.9.4/uni-cli-real-execution-20261024.mp4)
+
+[**Watch the 42-second video**](https://github.com/memolabs-dev/uni-protocol/releases/download/v0.9.4/uni-cli-real-execution-20261024.mp4) · [**Reproduce this exact workflow**](docs/demo-proof-20261024.md)
+
+The video recreates terminal frames from the **actual recorded output** of the public v0.9.4 ARM64 release on a clean Git clone; it is not an unedited screen recording. The example verifies one claim, **not** an independently identified reviewer: the report explicitly says `A2` and `identity: SELF-DECLARED`. See the linked run record before interpreting its verdict.
+
 > Developer Preview. The latest published binary is v0.9.4. See
 > [current status](docs/current-status.md) for what is shipped, what is measured,
 > and what is still deliberately out of scope.
