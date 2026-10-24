@@ -11,7 +11,7 @@ shared:
         - author = guillaume-flambard
     - label != hold-merge
     - label != needs-human-review
-    - "-files ~= ^(\\.github/|\\.mergify\\.yml$|CODEOWNERS$|AGENTS\\.md$|deploy/|ansible/|infra/|stacks/|\\.env)|(^|/)migrations/|^(constitution\\.md$|\\.specify/memory/constitution\\.md$|crates/uni-verify/|crates/uni-cli/src/cmd/authorize\\.rs$)"
+    - "-files ~= ^(\\.github/|\\.mergify\\.yml$|CODEOWNERS$|AGENTS\\.md$|\\.env)|^(constitution\\.md$|\\.specify/memory/constitution\\.md$|crates/uni-verify/|crates/uni-cli/src/cmd/authorize\\.rs$)"
     - "check-success = @github-actions/UNI required checks"
 
 merge_queue:
